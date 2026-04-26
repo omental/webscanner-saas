@@ -1,0 +1,8 @@
+APP_NAME=Web Scanner Service
+APP_ENV=development
+DATABASE_URL=postgresql+asyncpg://YOUR_LOCAL_USERNAME@localhost:5432/webscanner
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+SCANNER_MAX_DEPTH=2
+SCANNER_MAX_PAGES=25
+SCANNER_TIMEOUT_SECONDS=10
+SCANNER_USER_AGENT=WebScannerBot/0.1

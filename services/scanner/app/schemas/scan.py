@@ -1,0 +1,49 @@
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.detected_technology import DetectedTechnologyRead
+from app.schemas.finding import FindingRead
+from app.schemas.scan_page import ScanPageRead
+from app.schemas.target import TargetRead
+
+
+class ScanCreate(BaseModel):
+    user_id: int
+    target_id: int
+    scan_type: str
+    status: str = "queued"
+    max_depth: int | None = Field(default=None, ge=0, le=10)
+    max_pages: int | None = Field(default=None, ge=1, le=1000)
+    timeout_seconds: int | None = Field(default=None, ge=3, le=60)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class ScanRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    organization_id: int | None = None
+    target_id: int
+    scan_type: str
+    status: str
+    total_pages_found: int
+    total_findings: int
+    max_depth: int | None = None
+    max_pages: int | None = None
+    timeout_seconds: int | None = None
+    error_message: str | None = None
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScanDetailRead(ScanRead):
+    target: TargetRead | None = None
+    completed_at: datetime | None = None
+    findings: list[FindingRead] = Field(default_factory=list)
+    technologies: list[DetectedTechnologyRead] = Field(default_factory=list)
+    pages: list[ScanPageRead] = Field(default_factory=list)
