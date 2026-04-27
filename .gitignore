@@ -11,7 +11,7 @@ dist/
 build/
 .turbo/
 .cache/
-
+.next 2/
 # env
 .env
 .env.*

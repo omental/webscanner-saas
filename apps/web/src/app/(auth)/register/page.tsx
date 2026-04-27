@@ -8,7 +8,7 @@ import { AuthShell } from "@/components/auth/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { apiClient, buildApiUrl } from "@/lib/api-client";
+import { apiClient } from "@/lib/api-client";
 import { Package, TrialRegistrationResponse } from "@/lib/types";
 
 export default function RegisterPage() {
@@ -18,20 +18,32 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [organizationName, setOrganizationName] = useState("");
   const [selectedPackageId, setSelectedPackageId] = useState("");
+
   const [submitting, setSubmitting] = useState(false);
+  const [packagesLoading, setPackagesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<TrialRegistrationResponse | null>(null);
 
   useEffect(() => {
     async function loadPackages() {
       try {
+        setPackagesLoading(true);
+        setError(null);
+
         const data = await apiClient.listPackages();
-        setPackages(data);
-        if (data[0]) {
-          setSelectedPackageId(String(data[0].id));
+        const activePackages = Array.isArray(data)
+          ? data.filter((item) => item.status === "active")
+          : [];
+
+        setPackages(activePackages);
+
+        if (activePackages[0]) {
+          setSelectedPackageId(String(activePackages[0].id));
         }
       } catch {
         setError("Unable to load packages.");
+      } finally {
+        setPackagesLoading(false);
       }
     }
 
@@ -41,18 +53,24 @@ export default function RegisterPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (!selectedPackageId) {
+      setError("Please select a package.");
+      return;
+    }
+
     try {
       setSubmitting(true);
       setError(null);
+
       const response = await apiClient.registerTrial({
         name,
         email,
         password,
         organization_name: organizationName,
-        selected_package_id: Number(selectedPackageId)
+        selected_package_id: Number(selectedPackageId),
       });
+
       setSuccess(response);
-      window.open(buildApiUrl(response.invoice_pdf_url), "_blank");
     } catch (registrationError) {
       setError(
         registrationError instanceof Error
@@ -68,26 +86,29 @@ export default function RegisterPage() {
     return (
       <AuthShell
         eyebrow="Trial Started"
-        title="Your 14-day free trial has started."
-        description="No credit card required. Your first invoice has been generated for after your trial."
+        title="Your 14-day trial is ready."
+        description="Your workspace has been created. Sign in to add targets, run your first scan, and download invoices from your dashboard."
         footer={
           <p>
             Ready to scan?{" "}
-            <Link href="/login" className="text-cyan-300 hover:text-cyan-200">
+            <Link href="/login" className="font-semibold text-cyan-200 hover:text-white">
               Sign in
             </Link>
           </p>
         }
       >
         <div className="space-y-5">
-          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-100">
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm leading-7 text-emerald-100">
             {success.message}
           </div>
-          <Button
-            fullWidth
-            onClick={() => window.open(buildApiUrl(success.invoice_pdf_url), "_blank")}
-          >
-            Download Invoice
+
+          <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4 text-sm leading-7 text-slate-300">
+            Your invoice has been generated. Please sign in first, then download
+            it from the Invoices page.
+          </div>
+
+          <Button fullWidth onClick={() => (window.location.href = "/login")}>
+            Go to login
           </Button>
         </div>
       </AuthShell>
@@ -96,23 +117,23 @@ export default function RegisterPage() {
 
   return (
     <AuthShell
-      eyebrow="Start your 14-day free trial"
-      title="Create your account"
-      description="No credit card required. Includes 1 trial scan so your team can evaluate the scanner before billing begins."
+      eyebrow="Start Free Trial"
+      title="Create your scanner workspace."
+      description="No credit card required. Start a 14-day trial, choose a package, and run your first scan from the dashboard."
       footer={
         <p>
           Already have an account?{" "}
-          <Link href="/login" className="text-cyan-300 hover:text-cyan-200">
+          <Link href="/login" className="font-semibold text-cyan-200 hover:text-white">
             Sign in
           </Link>
         </p>
       }
     >
       <AuthForm
-        submitLabel="Start free trial"
+        submitLabel={packagesLoading ? "Loading packages..." : "Start free trial"}
         helperText="No credit card required. Includes 1 trial scan."
         onSubmit={handleSubmit}
-        submitting={submitting}
+        submitting={submitting || packagesLoading}
       >
         <Input
           label="Full name"
@@ -121,6 +142,7 @@ export default function RegisterPage() {
           onChange={(event) => setName(event.target.value)}
           required
         />
+
         <Input
           label="Work email"
           type="email"
@@ -129,6 +151,7 @@ export default function RegisterPage() {
           onChange={(event) => setEmail(event.target.value)}
           required
         />
+
         <Input
           label="Password"
           type="password"
@@ -137,6 +160,7 @@ export default function RegisterPage() {
           onChange={(event) => setPassword(event.target.value)}
           required
         />
+
         <Input
           label="Organization"
           placeholder="Acme Security"
@@ -144,12 +168,18 @@ export default function RegisterPage() {
           onChange={(event) => setOrganizationName(event.target.value)}
           required
         />
+
         <Select
           label="Package"
           value={selectedPackageId}
           onChange={(event) => setSelectedPackageId(event.target.value)}
           required
+          disabled={packagesLoading || packages.length === 0}
         >
+          {packages.length === 0 ? (
+            <option value="">No active packages available</option>
+          ) : null}
+
           {packages.map((plan) => (
             <option key={plan.id} value={plan.id}>
               {plan.name} · {plan.scan_limit_per_week} scans/week · $
@@ -157,7 +187,12 @@ export default function RegisterPage() {
             </option>
           ))}
         </Select>
-        {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+
+        {error ? (
+          <div className="rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+            {error}
+          </div>
+        ) : null}
       </AuthForm>
     </AuthShell>
   );

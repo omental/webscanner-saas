@@ -1,9 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { apiClient, buildApiUrl } from "@/lib/api-client";
+import { apiClient } from "@/lib/api-client";
 import { Usage } from "@/lib/types";
+
+function statusClass(status: string) {
+  const value = status.toLowerCase();
+
+  if (value === "active") return "bg-emerald-50 text-emerald-700 ring-emerald-200";
+  if (value === "trial") return "bg-blue-50 text-blue-700 ring-blue-200";
+  if (value === "expired") return "bg-red-50 text-red-700 ring-red-200";
+  if (value === "suspended") return "bg-amber-50 text-amber-700 ring-amber-200";
+
+  return "bg-slate-100 text-slate-700 ring-slate-200";
+}
 
 export function UsageCard() {
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -22,9 +33,43 @@ export function UsageCard() {
     void loadUsage();
   }, []);
 
+  const usageStats = useMemo(() => {
+    if (!usage) {
+      return {
+        used: 0,
+        limit: 0,
+        remaining: 0,
+        percent: 0,
+      };
+    }
+
+    const isTrial = usage.subscription_status === "trial";
+
+    const used = isTrial
+      ? Number(usage.trial_scans_used || 0)
+      : Number(usage.scans_used_this_week || 0);
+
+    const limit = isTrial
+      ? Number(usage.trial_scan_limit || 0)
+      : Number(usage.scan_limit_per_week || 0);
+
+    const remaining = isTrial
+      ? Math.max(limit - used, 0)
+      : Number(usage.scans_remaining_this_week || 0);
+
+    const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+
+    return {
+      used,
+      limit,
+      remaining,
+      percent,
+    };
+  }, [usage]);
+
   if (error) {
     return (
-      <div className="rounded-[1.75rem] border border-rose-400/20 bg-rose-400/10 p-6 text-sm text-rose-100">
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700 shadow-sm">
         {error}
       </div>
     );
@@ -32,7 +77,7 @@ export function UsageCard() {
 
   if (!usage) {
     return (
-      <div className="rounded-[1.75rem] border border-white/10 bg-white/5 p-6 text-sm text-slate-400">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
         Loading weekly scan usage...
       </div>
     );
@@ -43,54 +88,72 @@ export function UsageCard() {
     ? new Date(usage.trial_ends_at).toLocaleDateString()
     : "Not set";
 
+  const limitReached =
+    trial ? usage.is_trial_limit_reached : usageStats.remaining <= 0;
+
   return (
-    <div className="rounded-[1.75rem] border border-white/10 bg-slate-950/70 p-6">
-      <p className="text-sm uppercase tracking-[0.3em] text-cyan-300">
-        {trial ? "14-day free trial" : "Subscription"}
-      </p>
-      <h3 className="mt-4 text-2xl font-semibold text-white">
-        {usage.package_name ?? "No package"}
-      </h3>
-      {trial ? (
-        <>
-          <p className="mt-4 text-sm text-slate-300">Trial ends: {trialEnds}</p>
-          <p className="mt-2 text-sm text-slate-300">
-            Trial Scan: {usage.trial_scans_used} / {usage.trial_scan_limit}
+    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+        <div>
+          <p className="text-sm font-medium uppercase tracking-wide text-blue-600">
+            {trial ? "14-day free trial" : "Subscription"}
           </p>
-          {usage.is_trial_limit_reached ? (
-            <p className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">
-              Your free trial includes 1 scan. Upgrade to continue scanning.
-            </p>
-          ) : null}
-        </>
-      ) : (
-        <>
-          <p className="mt-4 text-sm text-slate-300">
-            Status: {usage.subscription_status}
+
+          <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+            {usage.package_name ?? "No package"}
+          </h3>
+
+          <p className="mt-2 text-sm text-slate-500">
+            {trial
+              ? `Trial ends: ${trialEnds}`
+              : `Status: ${usage.subscription_status}`}
           </p>
-          <p className="mt-2 text-sm text-slate-300">
-            Scans used this week: {usage.scans_used_this_week} /{" "}
-            {usage.scan_limit_per_week}
-          </p>
-          <p className="mt-2 text-sm text-slate-300">
-            Remaining: {usage.scans_remaining_this_week}
-          </p>
-        </>
-      )}
-      {usage.current_invoice_status ? (
-        <div className="mt-4 flex flex-col gap-3 border-t border-white/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-slate-300">
-            Invoice: {usage.current_invoice_status}
-          </p>
-          {usage.current_invoice_pdf_url ? (
-            <a
-              href={buildApiUrl(usage.current_invoice_pdf_url)}
-              target="_blank"
-              className="text-sm font-semibold text-cyan-300 hover:text-cyan-200"
-            >
-              Download invoice
-            </a>
-          ) : null}
+        </div>
+
+        <span
+          className={`inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium capitalize ring-1 ring-inset ${statusClass(
+            usage.subscription_status
+          )}`}
+        >
+          {usage.subscription_status}
+        </span>
+      </div>
+
+      <div className="mt-6">
+        <div className="mb-2 flex items-center justify-between text-sm">
+          <span className="font-medium text-slate-700">
+            {trial ? "Trial scan usage" : "Weekly scan usage"}
+          </span>
+          <span className="font-semibold text-slate-950">
+            {usageStats.used} / {usageStats.limit}
+          </span>
+        </div>
+
+        <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className={[
+              "h-full rounded-full transition-all",
+              limitReached
+                ? "bg-red-500"
+                : usageStats.percent >= 70
+                  ? "bg-amber-500"
+                  : "bg-blue-600",
+            ].join(" ")}
+            style={{ width: `${usageStats.percent}%` }}
+          />
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+          <span>{usageStats.percent}% used</span>
+          <span>{usageStats.remaining} remaining</span>
+        </div>
+      </div>
+
+      {limitReached ? (
+        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {trial
+            ? "Your free trial includes 1 scan. Upgrade to continue scanning."
+            : "Your weekly scan limit has been reached. Upgrade your package to continue scanning."}
         </div>
       ) : null}
     </div>
