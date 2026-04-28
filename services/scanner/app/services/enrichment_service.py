@@ -17,6 +17,8 @@ from app.models.kev_entry import KevEntry
 from app.models.vuln_affected_product import VulnAffectedProduct
 from app.models.vuln_record import VulnRecord
 from app.models.wordfence_vulnerability import WordfenceVulnerability
+from app.services.confidence import finding_confidence_metadata
+from app.services.finding_service import build_finding_deduplication_key
 
 
 @dataclass(frozen=True)
@@ -199,6 +201,17 @@ def build_known_vulnerability_finding_values(
         f"Detected technology: {technology.product_name} {version_label}; "
         f"matched CVE: {match.cve_id or 'unknown'}"
     )
+    metadata = finding_confidence_metadata(
+        context_validated=bool(technology.version),
+        payload_reflected=True,
+        weak_signal_count=0 if technology.version else 1,
+        response_snippet=evidence,
+        verification_steps=[
+            "Confirm the detected technology and version fingerprint.",
+            "Verify the version falls within the vulnerability's affected range.",
+        ],
+        false_positive_notes="Technology fingerprints can be inaccurate when assets are cached, proxied, or backported.",
+    )
     return {
         "scan_id": scan_id,
         "scan_page_id": technology.scan_page_id,
@@ -210,6 +223,16 @@ def build_known_vulnerability_finding_values(
         "evidence": evidence,
         "remediation": f"Upgrade {technology.product_name} to a non-vulnerable version.",
         "is_confirmed": False,
+        "deduplication_key": build_finding_deduplication_key(
+            scan_id=scan_id,
+            check_type="known_vulnerability",
+            severity=severity_from_cvss(match.cvss_score),
+            title=f"Known vulnerability detected in {technology.product_name}",
+            affected_url=f"technology:{technology.product_name}:{version_label}",
+            tested_parameter=match.cve_id,
+            scan_page_id=technology.scan_page_id,
+        ),
+        **metadata,
     }
 
 
@@ -251,6 +274,21 @@ def build_wordfence_finding_values(
         if match.patched_version
         else f"Update {technology.product_name} to a non-vulnerable version."
     )
+    evidence = (
+        f"Detected {software_label} slug: {match.slug}; detected version: {detected_version}; "
+        f"affected range: {affected_label}; wordfence_id: {match.wordfence_id or 'unknown'}"
+    )
+    metadata = finding_confidence_metadata(
+        context_validated=bool(technology.version),
+        payload_reflected=True,
+        weak_signal_count=0 if technology.version else 1,
+        response_snippet=evidence,
+        verification_steps=[
+            "Confirm the detected WordPress component slug and version.",
+            "Verify the detected version matches the affected Wordfence range.",
+        ],
+        false_positive_notes="WordPress plugin/theme fingerprints can be stale or hidden by caching and backports.",
+    )
 
     return {
         "scan_id": scan_id,
@@ -260,12 +298,19 @@ def build_wordfence_finding_values(
         "description": match.description,
         "severity": normalize_severity(match.severity, match.cvss_score),
         "confidence": "high",
-        "evidence": (
-            f"Detected {software_label} slug: {match.slug}; detected version: {detected_version}; "
-            f"affected range: {affected_label}; wordfence_id: {match.wordfence_id or 'unknown'}"
-        ),
+        "evidence": evidence,
         "remediation": remediation,
         "is_confirmed": False,
+        "deduplication_key": build_finding_deduplication_key(
+            scan_id=scan_id,
+            check_type="wordpress_vulnerability",
+            severity=normalize_severity(match.severity, match.cvss_score),
+            title=match.title,
+            affected_url=f"wordpress:{match.slug}:{detected_version}",
+            tested_parameter=match.wordfence_id or match.slug,
+            scan_page_id=technology.scan_page_id,
+        ),
+        **metadata,
     }
 
 

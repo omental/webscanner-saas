@@ -275,7 +275,7 @@ export function UsersTable({
                           </span>
                         ) : null}
 
-                        <Badge tone={statusTone(user.status)}>
+                        <Badge variant={statusTone(user.status)}>
                           {user.status}
                         </Badge>
 

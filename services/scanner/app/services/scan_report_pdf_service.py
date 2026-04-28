@@ -28,6 +28,12 @@ from reportlab.platypus import (
     Frame,
 )
 
+from app.services.pdf_rendering import (
+    markdown_table_to_pdf_table,
+    sanitize_pdf_text,
+    strip_markdown_table_pipes,
+)
+
 PAGE_W, PAGE_H = A4
 
 # ── Colour palette ────────────────────────────────────────────────────
@@ -168,6 +174,22 @@ def _styles() -> dict[str, ParagraphStyle]:
             textColor=SLATE_500,
             alignment=TA_RIGHT,
         ),
+        "table_header": ParagraphStyle(
+            "RTableHeader",
+            parent=base["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=8.5,
+            leading=11,
+            textColor=NAVY,
+        ),
+        "table_cell": ParagraphStyle(
+            "RTableCell",
+            parent=base["BodyText"],
+            fontName="Helvetica",
+            fontSize=8.3,
+            leading=10.5,
+            textColor=DARK_SLATE,
+        ),
     }
 
 
@@ -241,6 +263,7 @@ def _escape_html(text: str) -> str:
     """
     if not text:
         return ""
+    text = sanitize_pdf_text(text)
     # First: escape ALL HTML entities (< > & ")
     text = _html_escape(text, quote=False)
     return text
@@ -278,6 +301,8 @@ def _md_inline(text: str) -> str:
     to avoid generating ReportLab ``<a>`` tags with potentially unsafe
     URL content.
     """
+    text = sanitize_pdf_text(text)
+
     # Step 1: convert markdown links to plain text BEFORE escaping
     text = _INLINE_LINK.sub(r"\1 (\2)", text)
 
@@ -316,21 +341,45 @@ def _md_to_flowables(
 ) -> list:
     """Parse Markdown text into a list of ReportLab flowables."""
     flowables: list = []
-    lines = markdown_text.split("\n")
+    lines = sanitize_pdf_text(markdown_text).split("\n")
+    index = 0
 
-    for line in lines:
+    while index < len(lines):
+        line = lines[index]
         stripped = line.strip()
 
         # Blank line
         if not stripped:
             flowables.append(Spacer(1, 4))
+            index += 1
             continue
+
+        if "|" in stripped and index + 1 < len(lines):
+            table_lines = [line]
+            cursor = index + 1
+            while cursor < len(lines) and "|" in lines[cursor].strip():
+                table_lines.append(lines[cursor])
+                cursor += 1
+
+            table = markdown_table_to_pdf_table(table_lines, styles, usable_width)
+            if table is not None:
+                flowables.append(table)
+                flowables.append(Spacer(1, 8))
+                index = cursor
+                continue
+
+            fallback_text = strip_markdown_table_pipes(table_lines)
+            if fallback_text:
+                flowables.append(_safe_para(_md_inline(fallback_text), styles["body"]))
+                index = cursor
+                continue
 
         # Horizontal rule
         if re.match(r"^[-*_]{3,}\s*$", stripped):
             flowables.append(Spacer(1, 4))
             flowables.append(AccentLine(usable_width))
             flowables.append(Spacer(1, 4))
+            index += 1
             continue
 
         # Headings
@@ -338,11 +387,13 @@ def _md_to_flowables(
             flowables.append(
                 _safe_para(_md_inline(stripped[5:]), styles["h4"])
             )
+            index += 1
             continue
         if stripped.startswith("### "):
             flowables.append(
                 _safe_para(_md_inline(stripped[4:]), styles["h3"])
             )
+            index += 1
             continue
         if stripped.startswith("## "):
             flowables.append(Spacer(1, 6))
@@ -350,6 +401,7 @@ def _md_to_flowables(
             flowables.append(
                 _safe_para(_md_inline(stripped[3:]), styles["h2"])
             )
+            index += 1
             continue
         if stripped.startswith("# "):
             flowables.append(Spacer(1, 8))
@@ -357,6 +409,7 @@ def _md_to_flowables(
             flowables.append(
                 _safe_para(_md_inline(stripped[2:]), styles["h1"])
             )
+            index += 1
             continue
 
         # Bullet list
@@ -364,10 +417,11 @@ def _md_to_flowables(
         if bullet_match:
             flowables.append(
                 _safe_para(
-                    f"• {_md_inline(bullet_match.group(1))}",
+                    f"- {_md_inline(bullet_match.group(1))}",
                     styles["bullet"],
                 )
             )
+            index += 1
             continue
 
         # Numbered list
@@ -375,14 +429,16 @@ def _md_to_flowables(
         if num_match:
             flowables.append(
                 _safe_para(
-                    f"‣ {_md_inline(num_match.group(1))}",
+                    f"- {_md_inline(num_match.group(1))}",
                     styles["bullet"],
                 )
             )
+            index += 1
             continue
 
         # Default paragraph
         flowables.append(_safe_para(_md_inline(stripped), styles["body"]))
+        index += 1
 
     return flowables
 
@@ -398,18 +454,30 @@ def _build_cover(meta: ReportMeta, styles: dict[str, ParagraphStyle]) -> list:
     story.append(AccentLine(300))
     story.append(Spacer(1, 20))
     story.append(
-        Paragraph(f"Target: {meta.target_domain}", styles["cover_sub"])
+        Paragraph(
+            f"Target: {_escape_html(sanitize_pdf_text(meta.target_domain))}",
+            styles["cover_sub"],
+        )
     )
-    story.append(Paragraph(f"Scan ID: {meta.scan_id}", styles["cover_sub"]))
+    story.append(
+        Paragraph(
+            f"Scan ID: {_escape_html(sanitize_pdf_text(meta.scan_id))}",
+            styles["cover_sub"],
+        )
+    )
     if meta.organization_name:
         story.append(
             Paragraph(
-                f"Organization: {meta.organization_name}", styles["cover_sub"]
+                f"Organization: {_escape_html(sanitize_pdf_text(meta.organization_name))}",
+                styles["cover_sub"],
             )
         )
     story.append(Spacer(1, 12))
     story.append(
-        Paragraph(f"Generated: {meta.generated_at}", styles["cover_sub"])
+        Paragraph(
+            f"Generated: {_escape_html(sanitize_pdf_text(meta.generated_at))}",
+            styles["cover_sub"],
+        )
     )
 
     story.append(Spacer(1, 140))
@@ -596,4 +664,3 @@ def build_ai_report_pdf(report_text: str, meta: ReportMeta) -> bytes:
 
     doc.build(story)
     return buffer.getvalue()
-

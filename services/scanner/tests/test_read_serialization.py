@@ -40,9 +40,11 @@ def test_scans_list_serialization_defaults_nullable_totals() -> None:
             user_id=7,
             target_id=1,
             scan_type="full",
+            scan_profile=None,
             status="queued",
             total_pages_found=None,
             total_findings=None,
+            risk_score=42,
             started_at=None,
             finished_at=None,
             created_at=datetime.now(timezone.utc),
@@ -54,6 +56,8 @@ def test_scans_list_serialization_defaults_nullable_totals() -> None:
 
     assert serialized[0].total_pages_found == 0
     assert serialized[0].total_findings == 0
+    assert serialized[0].scan_profile == "standard"
+    assert serialized[0].risk_score == 42
 
 
 def test_scan_pages_list_serialization_succeeds() -> None:
@@ -90,6 +94,26 @@ def test_findings_list_serialization_succeeds() -> None:
             description="The target serves HTTP without redirecting to HTTPS.",
             severity="high",
             confidence="high",
+            confidence_level="medium",
+            confidence_score=55,
+            evidence_type="multiple_signals",
+            verification_steps=["Replay request."],
+            payload_used="single_quote",
+            affected_parameter="id",
+            response_snippet="SQL syntax error",
+            false_positive_notes="Verify manually.",
+            request_url="https://example.com/item?id=1",
+            http_method="GET",
+            tested_parameter="id",
+            payload="'",
+            baseline_status_code=200,
+            attack_status_code=500,
+            baseline_response_size=1000,
+            attack_response_size=1200,
+            baseline_response_time_ms=100,
+            attack_response_time_ms=150,
+            response_diff_summary="status changed",
+            deduplication_key="finding:v1:test",
             evidence=None,
             remediation="Redirect all HTTP traffic to HTTPS.",
             is_confirmed=False,
@@ -113,6 +137,11 @@ def test_findings_list_serialization_succeeds() -> None:
 
     assert serialized[0].severity == "high"
     assert serialized[0].scan_page_id is None
+    assert serialized[0].request_url == "https://example.com/item?id=1"
+    assert serialized[0].tested_parameter == "id"
+    assert serialized[0].attack_status_code == 500
+    assert serialized[0].response_diff_summary == "status changed"
+    assert serialized[0].deduplication_key == "finding:v1:test"
     assert serialized[0].references[0].ref_type == "cve"
 
 

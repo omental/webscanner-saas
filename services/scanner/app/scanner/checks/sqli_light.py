@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
+from app.services.confidence import finding_confidence_metadata
+
 SQLI_LIGHT_PROBES = ("'", '"', ")", "')")
 _INPUT_PATTERN = re.compile(
     r'<input[^>]+name=["\']?([a-zA-Z0-9_-]+)["\']?', re.IGNORECASE
@@ -57,6 +59,25 @@ class SqliLightIssue:
     confidence: str | None
     evidence: str | None
     dedupe_key: str
+    confidence_level: str | None = None
+    confidence_score: int | None = None
+    evidence_type: str | None = None
+    verification_steps: list[str] | None = None
+    payload_used: str | None = None
+    affected_parameter: str | None = None
+    response_snippet: str | None = None
+    false_positive_notes: str | None = None
+    request_url: str | None = None
+    http_method: str | None = None
+    tested_parameter: str | None = None
+    payload: str | None = None
+    baseline_status_code: int | None = None
+    attack_status_code: int | None = None
+    baseline_response_size: int | None = None
+    attack_response_size: int | None = None
+    baseline_response_time_ms: int | None = None
+    attack_response_time_ms: int | None = None
+    response_diff_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +207,29 @@ def check_sqli_light(
         ):
             return []
 
+        metadata = finding_confidence_metadata(
+            weak_signal_count=2,
+            payload_used=_probe_label(probe),
+            affected_parameter=param_name,
+            response_snippet=(response_body or "")[:240],
+            request_url=page_url,
+            http_method="GET",
+            tested_parameter=param_name,
+            payload=probe,
+            baseline_status_code=baseline_status_code,
+            attack_status_code=probe_status_code,
+            baseline_response_size=len(baseline_body) if baseline_body is not None else None,
+            attack_response_size=len(response_body) if response_body is not None else None,
+            response_diff_summary=(
+                f"baseline_status={baseline_status_code}; attack_status={probe_status_code}; "
+                f"baseline_size={len(baseline_body or '')}; attack_size={len(response_body or '')}"
+            ),
+            verification_steps=[
+                "Replay the baseline and SQL probe requests.",
+                "Confirm the status code or response length changes only for the probe.",
+            ],
+            false_positive_notes="Response anomalies can be caused by validation, rate limits, or transient backend errors.",
+        )
         return [
             SqliLightIssue(
                 category="sqli_light",
@@ -209,12 +253,43 @@ def check_sqli_light(
                     f"probe_length={len(response_body or '')}"
                 )[:500],
                 dedupe_key=f"{page_url}:{param_name}:response-anomaly:sqli-light",
+                **metadata,
             )
         ]
 
     if baseline_body and find_sql_error_match(baseline_body):
         return []
 
+    response_diff = _has_response_anomaly(
+        baseline_status_code,
+        baseline_body,
+        probe_status_code,
+        response_body,
+    )
+    metadata = finding_confidence_metadata(
+        known_error_signature=True,
+        response_diff=response_diff,
+        weak_signal_count=0 if response_diff else 1,
+        payload_used=_probe_label(probe),
+        affected_parameter=param_name,
+        response_snippet=error_match.snippet[:240],
+        request_url=page_url,
+        http_method="GET",
+        tested_parameter=param_name,
+        payload=probe,
+        baseline_status_code=baseline_status_code,
+        attack_status_code=probe_status_code,
+        baseline_response_size=len(baseline_body) if baseline_body is not None else None,
+        attack_response_size=len(response_body) if response_body is not None else None,
+        response_diff_summary=(
+            f"dbms={error_match.dbms}; sql_error_signature={error_match.pattern}"
+        ),
+        verification_steps=[
+            "Replay the baseline and SQL probe requests.",
+            "Confirm the database error signature appears only in the probe response.",
+        ],
+        false_positive_notes="Database-looking errors can be generic exception pages unless tied to the injected parameter.",
+    )
     return [
         SqliLightIssue(
             category="sqli_light",
@@ -232,5 +307,6 @@ def check_sqli_light(
                 f"snippet={error_match.snippet}"
             )[:500],
             dedupe_key=f"{page_url}:{param_name}:{error_match.dbms}:sqli-light",
+            **metadata,
         )
     ]

@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { buildApiUrl } from "@/lib/api-client";
 import { getSessionUser } from "@/lib/session";
+import { Finding, Scan } from "@/lib/types";
 
 type Props = {
   scanId: number;
   scanStatus: string;
+  scan?: Scan | null;
+  findings?: Finding[];
 };
 
 type AiReportResponse = {
@@ -24,9 +27,12 @@ type ReportHistoryItem = {
   created_at: string | null;
   download_url: string;
   has_pdf?: boolean;
+  provider?: string | null;
+  model?: string | null;
+  report_text?: string | null;
 };
 
-function getAuthHeaders() {
+function getAuthHeaders(): Record<string, string> {
   const user = getSessionUser();
 
   if (!user?.id) {
@@ -52,7 +58,50 @@ function normalizeApiPath(path?: string | null) {
   return `/api/v1/${path}`;
 }
 
-export function AiReportSection({ scanId, scanStatus }: Props) {
+function formatDate(value?: string | null) {
+  if (!value) return "Not available";
+  return new Date(value).toLocaleString();
+}
+
+function reportPreview(text?: string | null) {
+  if (!text) return "Report preview is not available for this entry.";
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > 220 ? `${normalized.slice(0, 220)}...` : normalized;
+}
+
+function normalizeConfidence(finding: Finding) {
+  return String(finding.confidence_level || finding.confidence || "info").toLowerCase();
+}
+
+function isInformationalObservation(finding: Finding) {
+  const confidence = normalizeConfidence(finding);
+  return confidence === "low" || confidence === "info" || confidence === "informational";
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const value = status.toLowerCase();
+  const classes =
+    value === "completed"
+      ? "bg-emerald-50 text-emerald-700"
+      : value === "generating"
+        ? "bg-blue-50 text-blue-700"
+        : value === "failed"
+          ? "bg-red-50 text-red-700"
+          : "bg-slate-100 text-slate-700";
+
+  return (
+    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${classes}`}>
+      {status}
+    </span>
+  );
+}
+
+export function AiReportSection({
+  scanId,
+  scanStatus,
+  scan,
+  findings = [],
+}: Props) {
   const [reportText, setReportText] = useState<string | null>(null);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -66,6 +115,22 @@ export function AiReportSection({ scanId, scanStatus }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const isCompleted = scanStatus?.toLowerCase() === "completed";
+  const latestReport = history[0] || null;
+  const reportStatus = isGenerating
+    ? "generating"
+    : error
+      ? "failed"
+      : reportText || latestReport
+        ? "completed"
+        : "not generated";
+  const mainSecurityFindings = findings.filter(
+    (finding) => !isInformationalObservation(finding)
+  ).length;
+  const informationalObservations = findings.filter(isInformationalObservation).length;
+  const activeReportPreview = reportText || latestReport?.report_text || null;
+  const activeGeneratedAt = generatedAt || latestReport?.created_at || null;
+  const activeProvider = latestReport?.provider || "AI provider not reported";
+  const activeModel = latestReport?.model || "Model not reported";
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -197,28 +262,75 @@ export function AiReportSection({ scanId, scanStatus }: Props) {
   }
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <section className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm ring-1 ring-blue-50">
       <div className="flex flex-col justify-between gap-4 border-b border-slate-200 pb-5 md:flex-row md:items-center">
         <div>
           <p className="text-sm font-medium uppercase tracking-wide text-blue-600">
-            Analysis
+            Report Center
           </p>
-          <h3 className="mt-2 text-xl font-semibold text-slate-950">
-            Security Report
-          </h3>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <h3 className="text-xl font-semibold text-slate-950">
+              Security Report
+            </h3>
+            <StatusBadge status={reportStatus} />
+          </div>
           <p className="mt-1 text-sm text-slate-500">
-            Generate a client-ready security report from this scan.
+            Generate, review, and download a client-ready report for this scan.
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={!isCompleted || isGenerating}
-          onClick={handleGenerate}
-          className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {isGenerating ? "Generating..." : "AI Report"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={!isCompleted || isGenerating}
+            onClick={handleGenerate}
+            className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isGenerating
+              ? "Generating..."
+              : reportText || latestReport
+                ? "Regenerate Report"
+                : "Generate AI Report"}
+          </button>
+
+          {(downloadUrl && reportId) || latestReport ? (
+            <button
+              type="button"
+              onClick={() =>
+                reportId
+                  ? void downloadReport(reportId, downloadUrl)
+                  : latestReport
+                    ? void downloadReport(latestReport.id, latestReport.download_url)
+                    : undefined
+              }
+              disabled={downloadingReportId !== null}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+            >
+              {downloadingReportId !== null ? "Downloading..." : "Download PDF Report"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs font-medium text-slate-500">Risk Score</p>
+          <p className="mt-2 text-2xl font-semibold text-red-600">
+            {scan?.risk_score ?? "—"}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs font-medium text-slate-500">Main Security Findings</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950">
+            {mainSecurityFindings}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs font-medium text-slate-500">Informational Observations</p>
+          <p className="mt-2 text-2xl font-semibold text-blue-600">
+            {informationalObservations}
+          </p>
+        </div>
       </div>
 
       {!isCompleted ? (
@@ -247,7 +359,7 @@ export function AiReportSection({ scanId, scanStatus }: Props) {
                 Report generated
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                {generatedAt ? new Date(generatedAt).toLocaleString() : "—"}
+                {formatDate(generatedAt)}
               </p>
             </div>
 
@@ -269,13 +381,47 @@ export function AiReportSection({ scanId, scanStatus }: Props) {
             {reportText}
           </div>
         </div>
+      ) : latestReport ? (
+        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5">
+          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+            <div>
+              <p className="text-sm font-semibold text-slate-950">
+                Latest generated report
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {activeProvider} · {activeModel} · {formatDate(activeGeneratedAt)}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void downloadReport(latestReport.id, latestReport.download_url)}
+                disabled={downloadingReportId === latestReport.id}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                {downloadingReportId === latestReport.id ? "Downloading..." : "Download PDF"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void downloadReport(latestReport.id, latestReport.download_url)}
+                disabled={downloadingReportId === latestReport.id}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                View generated report
+              </button>
+            </div>
+          </div>
+          <p className="mt-4 text-sm leading-6 text-slate-600">
+            {reportPreview(activeReportPreview)}
+          </p>
+        </div>
       ) : (
         <div className="mt-6 rounded-xl border border-dashed border-slate-200 p-8 text-center">
           <p className="text-sm font-medium text-slate-900">
             No security report generated yet.
           </p>
           <p className="mt-1 text-sm text-slate-500">
-            Click AI Report to generate a professional scan report.
+            Click Generate AI Report to create a professional scan report.
           </p>
         </div>
       )}
@@ -311,24 +457,43 @@ export function AiReportSection({ scanId, scanStatus }: Props) {
                     Report #{report.id}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    {report.created_at
-                      ? new Date(report.created_at).toLocaleString()
-                      : "Generated report"}
+                    {(report.provider || "Provider not reported") +
+                      " · " +
+                      (report.model || "Model not reported") +
+                      " · " +
+                      formatDate(report.created_at)}
                   </p>
+                  {report.status ? (
+                    <div className="mt-2">
+                      <StatusBadge status={report.status} />
+                    </div>
+                  ) : null}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    void downloadReport(report.id, report.download_url)
-                  }
-                  disabled={downloadingReportId === report.id}
-                  className="w-fit rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
-                >
-                  {downloadingReportId === report.id
-                    ? "Downloading..."
-                    : "Download PDF"}
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void downloadReport(report.id, report.download_url)
+                    }
+                    disabled={downloadingReportId === report.id}
+                    className="w-fit rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {downloadingReportId === report.id
+                      ? "Downloading..."
+                      : "Download PDF"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void downloadReport(report.id, report.download_url)
+                    }
+                    disabled={downloadingReportId === report.id}
+                    className="w-fit rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Open
+                  </button>
+                </div>
               </div>
             ))}
           </div>

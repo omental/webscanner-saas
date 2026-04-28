@@ -6,6 +6,8 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 from app.scanner.checks.csrf import TOKEN_NAME_MARKERS
+from app.services.confidence import finding_confidence_metadata
+from app.services.xss_context import classify_xss_context
 
 STORED_XSS_MARKER_PREFIX = "SCANNER_STORED_XSS_MARKER_"
 SAFE_FORM_MARKERS = {"contact", "feedback", "comment", "review", "testimonial"}
@@ -63,6 +65,25 @@ class StoredXssIssue:
     confidence: str | None
     evidence: str | None
     dedupe_key: str
+    confidence_level: str | None = None
+    confidence_score: int | None = None
+    evidence_type: str | None = None
+    verification_steps: list[str] | None = None
+    payload_used: str | None = None
+    affected_parameter: str | None = None
+    response_snippet: str | None = None
+    false_positive_notes: str | None = None
+    request_url: str | None = None
+    http_method: str | None = None
+    tested_parameter: str | None = None
+    payload: str | None = None
+    baseline_status_code: int | None = None
+    attack_status_code: int | None = None
+    baseline_response_size: int | None = None
+    attack_response_size: int | None = None
+    baseline_response_time_ms: int | None = None
+    attack_response_time_ms: int | None = None
+    response_diff_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -423,13 +444,12 @@ def classify_stored_xss_context(
             return StoredXssDetection("escaped", False, encoded_payload, "low", "low")
 
     if marker in response_body:
-        if _marker_is_in_script_block(marker, response_body):
-            return StoredXssDetection("script_block", True, marker, "high", "medium")
-        if _marker_is_in_attribute(marker, response_body):
-            return StoredXssDetection("html_attribute", True, marker, "medium", "medium")
-        if not _marker_is_inside_tag(marker, response_body):
-            return StoredXssDetection("html_text", True, marker, "medium", "medium")
-        return StoredXssDetection("unknown", True, marker, "medium", "medium")
+        context = classify_xss_context(response_body, marker)
+        if not context["reflected"]:
+            return None
+        if context["executable_context"]:
+            return StoredXssDetection(str(context["context"]), True, marker, "high", "high")
+        return StoredXssDetection(str(context["context"]), True, marker, "medium", "medium")
 
     for encoded_value in _encoded_variants(marker):
         if encoded_value and encoded_value in response_body:
@@ -469,6 +489,40 @@ def check_stored_xss_response(
         f"revisit_url={revisit_url} context={detection.context} "
         f"browser_verified={str(browser_verified).lower()} snippet={snippet}"
     )[:500]
+    context = classify_xss_context(response_body or "", marker)
+    executable_context = browser_verified or bool(context["executable_context"])
+    false_positive_notes = None
+    if not executable_context:
+        false_positive_notes = (
+            "Reflected input was not observed in an executable context; "
+            "manual verification is required."
+        )
+    metadata = finding_confidence_metadata(
+        exploit_confirmed=browser_verified,
+        context_validated=executable_context and not browser_verified,
+        payload_reflected=detection.raw_reflection,
+        weak_signal_count=0 if executable_context else 1,
+        payload_used="[safe stored XSS marker payload]",
+        affected_parameter=field_names or None,
+        response_snippet=snippet[:240],
+        request_url=form.action_url,
+        http_method=form.method.upper(),
+        tested_parameter=field_names or None,
+        payload=payload,
+        attack_response_size=len(response_body) if response_body is not None else None,
+        response_diff_summary=(
+            f"revisit_url={revisit_url}; context={detection.context}; "
+            f"browser_verified={str(browser_verified).lower()}; "
+            f"executable_context={str(executable_context).lower()}; summary={context['summary']}"
+        ),
+        verification_steps=[
+            "Submit a safe marker payload to the selected public form.",
+            "Revisit the page and confirm the marker is stored in the reported context.",
+            "Use browser verification before treating this as confirmed execution.",
+        ],
+        false_positive_notes=false_positive_notes
+        or "Stored reflections can be safe when output encoding prevents browser execution.",
+    )
 
     return [
         StoredXssIssue(
@@ -486,6 +540,7 @@ def check_stored_xss_response(
                 f"{form.action_url}:{field_names}:{revisit_url}:"
                 f"{detection.context}:stored-xss"
             ),
+            **metadata,
         )
     ]
 

@@ -10,6 +10,7 @@ from app.api.routes import (
     payment_methods_router,
     scan_reports_router,
     scans_router,
+    scheduled_scans_router,
     targets_router,
     usage_router,
     users_router,
@@ -30,6 +31,7 @@ api_router.include_router(payment_methods_router)
 api_router.include_router(users_router)
 api_router.include_router(targets_router)
 api_router.include_router(scans_router)
+api_router.include_router(scheduled_scans_router)
 api_router.include_router(scan_reports_router)
 api_router.include_router(usage_router)
 api_router.include_router(webhooks_router)

@@ -3,6 +3,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
+from app.services.confidence import finding_confidence_metadata
+
 SSRF_PARAM_NAMES = {
     "url",
     "uri",
@@ -53,6 +55,25 @@ class SsrfIssue:
     confidence: str | None
     evidence: str | None
     dedupe_key: str
+    confidence_level: str | None = None
+    confidence_score: int | None = None
+    evidence_type: str | None = None
+    verification_steps: list[str] | None = None
+    payload_used: str | None = None
+    affected_parameter: str | None = None
+    response_snippet: str | None = None
+    false_positive_notes: str | None = None
+    request_url: str | None = None
+    http_method: str | None = None
+    tested_parameter: str | None = None
+    payload: str | None = None
+    baseline_status_code: int | None = None
+    attack_status_code: int | None = None
+    baseline_response_size: int | None = None
+    attack_response_size: int | None = None
+    baseline_response_time_ms: int | None = None
+    attack_response_time_ms: int | None = None
+    response_diff_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +226,28 @@ def check_ssrf_response(
         f"callback_domain={callback_host} evidence_type={evidence_match.kind} "
         f"snippet={evidence_match.snippet}"
     )[:500]
+    metadata = finding_confidence_metadata(
+        oob_callback_received=callback_confirmed,
+        known_error_signature=not callback_confirmed,
+        weak_signal_count=0 if callback_confirmed else 1,
+        payload_used=callback_url,
+        affected_parameter=param_name,
+        response_snippet=evidence_match.snippet[:240],
+        request_url=page_url,
+        http_method="GET",
+        tested_parameter=param_name,
+        payload=callback_url,
+        attack_response_size=len(response_body) if response_body is not None else None,
+        response_diff_summary=(
+            f"evidence_type={evidence_match.kind}; callback_domain={callback_host}"
+        ),
+        verification_steps=[
+            "Replay the request with a safe external callback URL.",
+            "Confirm a backend fetch error or out-of-band callback is tied to the request.",
+            "Verify the callback URL is controlled and not an internal network target.",
+        ],
+        false_positive_notes="Fetch errors without callbacks can be caused by normal URL validation or proxy behavior.",
+    )
 
     return [
         SsrfIssue(
@@ -219,5 +262,6 @@ def check_ssrf_response(
             confidence=evidence_match.confidence,
             evidence=evidence,
             dedupe_key=f"{page_url}:{param_name}:ssrf",
+            **metadata,
         )
     ]

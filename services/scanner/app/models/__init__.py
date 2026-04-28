@@ -12,6 +12,7 @@ from app.models.organization import Organization
 from app.models.scan_page import ScanPage
 from app.models.scan_report import ScanReport
 from app.models.scan import Scan
+from app.models.scheduled_scan import ScheduledScan
 from app.models.target import Target
 from app.models.payment_method import PaymentMethod
 from app.models.user import User
@@ -29,6 +30,7 @@ __all__ = [
     "PaymentMethod",
     "Target",
     "Scan",
+    "ScheduledScan",
     "ScanPage",
     "ScanReport",
     "Finding",

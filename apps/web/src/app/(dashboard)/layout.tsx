@@ -6,5 +6,5 @@ export default function DashboardLayout({
 }: Readonly<{
   children: ReactNode;
 }>) {
-  return <DashboardShell role="super_admin">{children}</DashboardShell>;
+  return <DashboardShell>{children}</DashboardShell>;
 }

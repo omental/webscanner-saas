@@ -197,30 +197,28 @@ export function ScanDetailPageClient({ scanId }: { scanId: number }) {
         </div>
       </div>
 
-      <ScanProgressPanel scan={liveScan as Scan} targetLabel={targetLabel} />
+<ScanProgressPanel scan={liveScan as Scan} targetLabel={targetLabel} />
 
-      {isDoneScan(scan.status) ? (
-        <ScanDetailSections
-          scan={scan}
-          pages={pages}
-          findings={findings}
-          technologies={technologies}
-        />
-      ) : (
-        <div className="rounded-2xl border border-blue-100 bg-blue-50 p-6 text-sm text-blue-700">
-          Scan is still running. Results below will update automatically as the
-          crawler finds pages and issues.
-        </div>
-      )}
+{!isDoneScan(scan.status) ? (
+  <div className="rounded-2xl border border-blue-100 bg-blue-50 p-6 text-sm text-blue-700">
+    Scan is still running. Results below will update automatically as the
+    crawler finds pages and issues.
+  </div>
+) : null}
 
-      <ScanDetailSections
-        scan={scan}
-        pages={pages}
-        findings={findings}
-        technologies={technologies}
-      />
+<ScanDetailSections
+  scan={scan}
+  pages={pages}
+  findings={findings}
+  technologies={technologies}
+/>
 
-      <AiReportSection scanId={scan.id} scanStatus={scan.status} />
+<AiReportSection
+  scanId={scan.id}
+  scanStatus={scan.status}
+  scan={scan}
+  findings={findings}
+/>
     </section>
   );
 }

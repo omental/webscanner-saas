@@ -114,8 +114,10 @@ def _make_scan(**overrides):
         "id": 42,
         "status": "completed",
         "scan_type": "full",
+        "scan_profile": "deep",
         "total_pages_found": 5,
         "total_findings": 2,
+        "risk_score": 64,
         "created_at": None,
         "started_at": None,
         "finished_at": None,
@@ -141,6 +143,26 @@ def _make_finding(**overrides):
         "severity": "low",
         "category": "missing_security_header",
         "confidence": "high",
+        "confidence_level": "medium",
+        "confidence_score": 55,
+        "evidence_type": "multiple_signals",
+        "verification_steps": ["Replay the request."],
+        "payload_used": None,
+        "affected_parameter": None,
+        "response_snippet": None,
+        "false_positive_notes": None,
+        "request_url": "https://example.com/login",
+        "http_method": "GET",
+        "tested_parameter": None,
+        "payload": None,
+        "baseline_status_code": None,
+        "attack_status_code": 200,
+        "baseline_response_size": None,
+        "attack_response_size": 512,
+        "baseline_response_time_ms": None,
+        "attack_response_time_ms": 50,
+        "response_diff_summary": "missing_header=x-frame-options",
+        "deduplication_key": "finding:v1:test",
         "description": "The X-Frame-Options header is not set.",
         "evidence": "Header not present in response.",
         "remediation": "Add X-Frame-Options: DENY.",
@@ -190,6 +212,8 @@ class TestBuildSanitizedScanReportData:
             technologies=None,
         )
         assert result["scan"]["id"] == 42
+        assert result["scan"]["scan_profile"] == "deep"
+        assert result["scan"]["risk_score"] == 64
         assert result["target"]["base_url"] == "https://example.com"
         assert result["findings"] == []
         assert result["pages"] == []
@@ -217,8 +241,36 @@ class TestBuildSanitizedScanReportData:
         assert f["title"] == "Missing X-Frame-Options"
         assert f["severity"] == "low"
         assert f["category"] == "missing_security_header"
+        assert f["confidence_level"] == "medium"
+        assert f["confidence_score"] == 55
+        assert f["evidence_type"] == "multiple_signals"
+        assert f["verification_steps"] == ["Replay the request."]
+        assert f["request_url"] == "https://example.com/login"
+        assert f["http_method"] == "GET"
+        assert f["attack_status_code"] == 200
+        assert f["attack_response_size"] == 512
+        assert f["response_diff_summary"] == "missing_header=x-frame-options"
+        assert f["deduplication_key"] == "finding:v1:test"
         assert f["description"] is not None
         assert f["remediation"] is not None
+
+    def test_findings_are_grouped_by_confidence(self) -> None:
+        main = _make_finding(title="SQL injection", confidence_level="high")
+        observation = _make_finding(
+            id=2,
+            title="Missing Referrer-Policy",
+            confidence_level="low",
+        )
+
+        result = build_sanitized_scan_report_data(
+            scan=_make_scan(),
+            target=_make_target(),
+            findings=[main, observation],
+        )
+
+        groups = result["finding_groups"]
+        assert groups["main_security_findings"][0]["title"] == "SQL injection"
+        assert groups["informational_observations"][0]["title"] == "Missing Referrer-Policy"
 
     def test_finding_evidence_is_masked(self) -> None:
         finding = _make_finding(

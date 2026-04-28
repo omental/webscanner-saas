@@ -98,6 +98,11 @@ from app.scanner.http_client import HttpClient
 from app.services.finding_service import count_findings_for_scan, create_findings_if_missing
 from app.services.enrichment_service import enrich_scan_findings
 from app.services.fingerprint_service import detect_and_store_page_technologies
+from app.services.scan_profiles import (
+    crawl_profile_for_scan,
+    normalize_scan_profile,
+    should_run_scan_module,
+)
 from app.services.scan_service import (
     get_scan_by_id,
     list_scan_pages,
@@ -142,6 +147,25 @@ async def _create_findings_if_not_cancelled(
     )
 
 
+async def _run_profiled_check(
+    session: AsyncSession,
+    scan_id: int,
+    scan_profile: str,
+    module_name: str,
+    runner,
+) -> None:
+    if not should_run_scan_module(scan_profile, module_name):
+        logger.info(
+            "scan module skipped scan_id=%s profile=%s module=%s",
+            scan_id,
+            scan_profile,
+            module_name,
+        )
+        return
+    await runner()
+    await _ensure_not_cancelled(session, scan_id)
+
+
 async def run_scan(scan_id: int) -> None:
     async with AsyncSessionLocal() as session:
         await _run_scan(session, scan_id)
@@ -170,6 +194,13 @@ async def _run_scan(session: AsyncSession, scan_id: int) -> None:
         return
 
     target_base_url = target.base_url
+    scan_profile = normalize_scan_profile(getattr(scan, "scan_profile", None))
+    crawl_profile = crawl_profile_for_scan(
+        scan_profile,
+        max_depth=getattr(scan, "max_depth", None),
+        max_pages=getattr(scan, "max_pages", None),
+        timeout_seconds=getattr(scan, "timeout_seconds", None),
+    )
 
     if await _is_scan_cancelled(session, stored_scan_id):
         logger.info("scan cancelled before start scan_id=%s", scan_id)
@@ -183,96 +214,188 @@ async def _run_scan(session: AsyncSession, scan_id: int) -> None:
             session=session,
             scan_id=stored_scan_id,
             base_url=target_base_url,
-            max_depth=scan.max_depth,
-            max_pages=scan.max_pages,
-            timeout_seconds=scan.timeout_seconds,
+            max_depth=crawl_profile.max_depth,
+            max_pages=crawl_profile.max_pages,
+            timeout_seconds=crawl_profile.timeout_seconds,
             should_cancel=lambda: _is_scan_cancelled(session, stored_scan_id),
         )
         result = await crawler.crawl()
         await _ensure_not_cancelled(session, stored_scan_id)
+        html_bodies_by_page_id = getattr(result, "html_bodies_by_page_id", {})
         logger.info(
             "target fetch success scan_id=%s total_pages_found=%s",
             scan_id,
             result.total_pages_found,
         )
-        await _run_transport_checks(session, stored_scan_id, target_base_url)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_crawl_checks(session, stored_scan_id)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_subdomain_discovery_checks(
+        await _run_profiled_check(
             session,
             stored_scan_id,
-            target_base_url,
-            result.html_bodies_by_page_id,
+            scan_profile,
+            "transport",
+            lambda: _run_transport_checks(session, stored_scan_id, target_base_url),
         )
-        await _ensure_not_cancelled(session, stored_scan_id)
-        try:
-            await _run_waf_detection_checks(session, stored_scan_id)
-        except ScanCancelled:
-            raise
-        except Exception:
-            logger.exception("waf detection checks failed scan_id=%s", scan_id)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_csrf_checks(session, stored_scan_id, result.html_bodies_by_page_id)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_file_upload_checks(
-            session, stored_scan_id, result.html_bodies_by_page_id
-        )
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_file_upload_advanced_checks(
-            session, stored_scan_id, result.html_bodies_by_page_id
-        )
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_cookie_checks(session, stored_scan_id)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_auth_surface_checks(
-            session, stored_scan_id, result.html_bodies_by_page_id
-        )
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_auth_advanced_checks(
-            session, stored_scan_id, result.html_bodies_by_page_id
-        )
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_cors_checks(session, stored_scan_id, target_base_url)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_header_checks(session, stored_scan_id)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_info_disclosure_checks(session, stored_scan_id, target_base_url)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_exposure_path_checks(session, stored_scan_id, target_base_url)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_fingerprinting(
+        await _run_profiled_check(
             session,
             stored_scan_id,
-            result.html_bodies_by_page_id,
+            scan_profile,
+            "crawl",
+            lambda: _run_crawl_checks(session, stored_scan_id),
         )
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_performance_checks(session, stored_scan_id)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_seo_checks(session, stored_scan_id, result.html_bodies_by_page_id)
-        await _ensure_not_cancelled(session, stored_scan_id)
-        await _run_active_checks(session, stored_scan_id)
-        await _ensure_not_cancelled(session, stored_scan_id)
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "subdomain_discovery",
+            lambda: _run_subdomain_discovery_checks(
+                session,
+                stored_scan_id,
+                target_base_url,
+                html_bodies_by_page_id,
+            ),
+        )
+        if should_run_scan_module(scan_profile, "waf_detection"):
+            try:
+                await _run_waf_detection_checks(session, stored_scan_id)
+            except ScanCancelled:
+                raise
+            except Exception:
+                logger.exception("waf detection checks failed scan_id=%s", scan_id)
+            await _ensure_not_cancelled(session, stored_scan_id)
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "csrf",
+            lambda: _run_csrf_checks(session, stored_scan_id, html_bodies_by_page_id),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "file_upload",
+            lambda: _run_file_upload_checks(
+                session, stored_scan_id, html_bodies_by_page_id
+            ),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "file_upload_advanced",
+            lambda: _run_file_upload_advanced_checks(
+                session, stored_scan_id, html_bodies_by_page_id
+            ),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "cookies",
+            lambda: _run_cookie_checks(session, stored_scan_id),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "auth_surface",
+            lambda: _run_auth_surface_checks(
+                session, stored_scan_id, html_bodies_by_page_id
+            ),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "auth_advanced",
+            lambda: _run_auth_advanced_checks(
+                session, stored_scan_id, html_bodies_by_page_id
+            ),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "cors",
+            lambda: _run_cors_checks(session, stored_scan_id, target_base_url),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "headers",
+            lambda: _run_header_checks(session, stored_scan_id),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "info_disclosure",
+            lambda: _run_info_disclosure_checks(
+                session, stored_scan_id, target_base_url
+            ),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "exposure_paths",
+            lambda: _run_exposure_path_checks(session, stored_scan_id, target_base_url),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "fingerprinting",
+            lambda: _run_fingerprinting(
+                session,
+                stored_scan_id,
+                html_bodies_by_page_id,
+            ),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "performance",
+            lambda: _run_performance_checks(session, stored_scan_id),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "seo",
+            lambda: _run_seo_checks(session, stored_scan_id, html_bodies_by_page_id),
+        )
+        await _run_profiled_check(
+            session,
+            stored_scan_id,
+            scan_profile,
+            "active",
+            lambda: _run_active_checks(session, stored_scan_id),
+        )
         try:
-            await _run_rce_checks(session, stored_scan_id)
+            if should_run_scan_module(scan_profile, "rce"):
+                await _run_rce_checks(session, stored_scan_id)
         except ScanCancelled:
             raise
         except Exception:
             logger.exception("rce checks failed scan_id=%s", scan_id)
         await _ensure_not_cancelled(session, stored_scan_id)
         try:
-            await _run_ssrf_checks(session, stored_scan_id)
+            if should_run_scan_module(scan_profile, "ssrf"):
+                await _run_ssrf_checks(session, stored_scan_id)
         except ScanCancelled:
             raise
         except Exception:
             logger.exception("ssrf checks failed scan_id=%s", scan_id)
         await _ensure_not_cancelled(session, stored_scan_id)
         try:
-            await _run_stored_xss_checks(
-                session,
-                stored_scan_id,
-                getattr(result, "html_bodies_by_page_id", {}),
-            )
+            if should_run_scan_module(scan_profile, "stored_xss"):
+                await _run_stored_xss_checks(
+                    session,
+                    stored_scan_id,
+                    html_bodies_by_page_id,
+                )
         except ScanCancelled:
             raise
         except Exception:

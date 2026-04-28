@@ -102,6 +102,7 @@ def test_build_scan_report_pdf_contains_expected_text() -> None:
         target_base_url="https://example.com",
         status="completed",
         scan_type="full",
+        scan_profile="standard",
         started_at=datetime.now(timezone.utc),
         finished_at=datetime.now(timezone.utc),
         total_pages_found=2,

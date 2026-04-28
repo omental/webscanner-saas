@@ -8,13 +8,12 @@ export function SeverityBadge({ severity }: SeverityBadgeProps) {
   const normalized = severity.toLowerCase();
   const tone =
     normalized === "critical" || normalized === "high"
-      ? "danger"
+      ? "error"
       : normalized === "medium"
         ? "warning"
         : normalized === "low"
           ? "info"
           : "neutral";
 
-  return <Badge tone={tone}>{severity}</Badge>;
+  return <Badge variant={tone}>{severity}</Badge>;
 }
-

@@ -7,6 +7,7 @@ from app.api.routes.packages import router as packages_router
 from app.api.routes.payment_methods import router as payment_methods_router
 from app.api.routes.scan_reports import router as scan_reports_router
 from app.api.routes.scans import router as scans_router
+from app.api.routes.scheduled_scans import router as scheduled_scans_router
 from app.api.routes.targets import router as targets_router
 from app.api.routes.usage import router as usage_router
 from app.api.routes.users import router as users_router
@@ -25,5 +26,6 @@ __all__ = [
     "usage_router",
     "scan_reports_router",
     "scans_router",
+    "scheduled_scans_router",
     "webhooks_router",
 ]

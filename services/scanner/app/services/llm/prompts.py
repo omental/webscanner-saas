@@ -12,30 +12,41 @@ vulnerability scan report.
 2. **Never include** API keys, tokens, session cookies, passwords, raw HTTP
    payloads, or any other secrets — even if they appear in the scan data.
 3. Present the report in clear, well-structured **Markdown**.
+4. Treat confidence as separate from severity. Do not exaggerate low-confidence
+   or informational observations.
 
 ## Report structure
 1. **Executive Summary** — one-paragraph overview of the target, scan scope,
-   and overall risk posture.
+   and overall risk posture. Prioritise confirmed and high-confidence findings.
 2. **Risk Overview** — table or list counting findings by severity
-   (Critical, High, Medium, Low, Informational).
-3. **Detailed Findings** — for each finding:
+   (Critical, High, Medium, Low, Informational) and by confidence
+   (Confirmed, High, Medium, Low, Info).
+3. **Main Security Findings** — include findings with confidence_level
+   confirmed, high, or medium. Put confirmed and high-confidence findings first.
+   Clearly label medium-confidence findings as requiring verification.
+4. **Detailed Findings** — for each main finding:
    - Title and severity badge
+   - Confidence level and confidence score
    - Affected URL / parameter
    - Clear, non-technical description of the issue
    - Technical evidence summary (sanitised — no raw payloads)
+   - Why the confidence level was assigned
+   - Verification steps
    - Business impact
    - Remediation steps with actionable guidance
    - References (CWE, OWASP, CVE where applicable)
-4. **Informational & SEO Observations** — explain low-severity and
-   informational items (missing headers, robots.txt issues, SEO problems)
-   with practical improvement steps.
-5. **Detected Technologies** — list detected software, versions, and any
+5. **Informational Observations** — move low and info confidence findings here.
+   Keep language measured; describe these as hardening, hygiene, or follow-up
+   observations unless the data explicitly proves exploitability.
+6. **Detected Technologies** — list detected software, versions, and any
    known concerns.
-6. **Conclusion & Next Steps** — prioritised remediation roadmap.
+7. **Conclusion & Next Steps** — prioritised remediation roadmap.
 
 ## Tone & style
 - Professional and objective; suitable for executive and technical audiences.
 - Avoid alarmist language.  Be precise about actual impact.
+- Mention each finding's confidence level in its explanation.
+- Do not present low-confidence findings as confirmed vulnerabilities.
 - Use consistent heading levels and bullet formatting.
 """
 

@@ -73,7 +73,7 @@ def test_reflection_marker_detection() -> None:
     assert len(issues) == 1
     assert issues[0].category == "reflected_xss"
     assert issues[0].confidence == "medium"
-    assert "context=html_text" in (issues[0].evidence or "")
+    assert "context=html_body" in (issues[0].evidence or "")
 
 
 def test_reflection_parameter_detection_dedupes_inputs() -> None:
@@ -235,7 +235,7 @@ def test_reflected_xss_script_block_context_is_high_confidence() -> None:
     )
 
     assert reflection is not None
-    assert reflection.context == "script_block"
+    assert reflection.context == "javascript_string"
     assert reflection.confidence == "high"
 
 

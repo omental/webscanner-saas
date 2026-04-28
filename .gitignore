@@ -33,3 +33,6 @@ pnpm-debug.log*
 *.db
 uploads/
 media/
+
+services/scanner/generated/
+*.pdf

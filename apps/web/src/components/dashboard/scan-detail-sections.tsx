@@ -44,6 +44,32 @@ function categoryBadgeClass(category?: string) {
   return "bg-slate-100 text-slate-700";
 }
 
+function normalizeConfidence(finding: any) {
+  return String(finding?.confidence_level || finding?.confidence || "info").toLowerCase();
+}
+
+function confidenceBadgeClass(confidence?: string | null) {
+  const value = String(confidence || "info").toLowerCase();
+
+  if (value === "confirmed") return "bg-emerald-50 text-emerald-700 ring-emerald-600/10";
+  if (value === "high") return "bg-red-50 text-red-700 ring-red-600/10";
+  if (value === "medium") return "bg-yellow-50 text-yellow-700 ring-yellow-600/10";
+  if (value === "low") return "bg-blue-50 text-blue-700 ring-blue-600/10";
+
+  return "bg-slate-100 text-slate-700 ring-slate-600/10";
+}
+
+function isInformationalObservation(finding: any) {
+  const confidence = normalizeConfidence(finding);
+  return confidence === "low" || confidence === "info" || confidence === "informational";
+}
+
+function formatFieldValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "Not available";
+  if (Array.isArray(value)) return value.join(", ");
+  return String(value);
+}
+
 function slugify(text: string) {
   return text
     .toLowerCase()
@@ -60,6 +86,24 @@ function extractCveFromText(text?: string | null) {
   if (!text) return null;
   const match = text.match(/CVE-\d{4}-\d+/i);
   return match ? match[0].toUpperCase() : null;
+}
+
+function extractCweFromText(text?: string | null) {
+  if (!text) return null;
+  const match = text.match(/CWE-\d+/i);
+  return match ? match[0].toUpperCase() : null;
+}
+
+function extractOwaspFromText(text?: string | null) {
+  if (!text) return null;
+  const match = text.match(/OWASP\s+A\d{2}/i);
+  return match ? match[0].toUpperCase().replace(/\s+/, " ") : null;
+}
+
+function extractExploitDbFromText(text?: string | null) {
+  if (!text) return null;
+  const match = text.match(/(?:EDB-ID|Exploit-DB)[:\s#-]*(\d+)/i);
+  return match ? `Exploit-DB ${match[1]}` : null;
 }
 
 function extractPluginSlug(text?: string | null) {
@@ -106,23 +150,26 @@ function buildWordfenceUrl(finding: any, reference?: any) {
 }
 
 function buildReferenceLinks(finding: any) {
-  const links = new Map<string, { label: string; url: string }>();
+  const links = new Map<string, { label: string; url?: string; kind: string }>();
 
   const references = Array.isArray(finding?.references)
     ? finding.references
     : [];
 
-  function add(label: string, url?: string | null) {
-    if (!url) return;
-    if (!links.has(url)) links.set(url, { label, url });
+  function add(label?: string | null, url?: string | null, kind = "reference") {
+    if (!label) return;
+    const key = url || `${kind}:${label}`;
+    if (!links.has(key)) links.set(key, { label, url: url || undefined, kind });
   }
 
   for (const ref of references) {
-    const source = String(ref?.source || ref?.provider || "").toLowerCase();
-    const directUrl = ref?.url || ref?.href || ref?.link;
+    const source = String(ref?.source || ref?.provider || ref?.ref_type || "").toLowerCase();
+    const value = ref?.ref_value || ref?.value || ref?.title || ref?.name;
+    const directUrl = ref?.ref_url || ref?.url || ref?.href || ref?.link;
 
     if (directUrl) {
       const label =
+        value ||
         ref?.title ||
         ref?.name ||
         ref?.cve ||
@@ -130,11 +177,12 @@ function buildReferenceLinks(finding: any) {
         ref?.source ||
         "Reference";
 
-      add(label, directUrl);
+      add(label, directUrl, source || "advisory");
       continue;
     }
 
     const cve =
+      extractCveFromText(value) ||
       ref?.cve ||
       ref?.cve_id ||
       extractCveFromText(ref?.title) ||
@@ -142,12 +190,31 @@ function buildReferenceLinks(finding: any) {
       extractCveFromText(ref?.description);
 
     if (cve) {
-      add(cve, `https://nvd.nist.gov/vuln/detail/${cve}`);
+      add(cve, `https://nvd.nist.gov/vuln/detail/${cve}`, "cve");
+      continue;
+    }
+
+    const cwe = extractCweFromText(value) || extractCweFromText(ref?.description);
+    if (cwe) {
+      add(cwe, `https://cwe.mitre.org/data/definitions/${cwe.replace("CWE-", "")}.html`, "cwe");
+      continue;
+    }
+
+    const owasp = extractOwaspFromText(value) || extractOwaspFromText(ref?.description);
+    if (owasp) {
+      add(owasp, "https://owasp.org/www-project-top-ten/", "owasp");
+      continue;
+    }
+
+    const exploitDb =
+      extractExploitDbFromText(value) || extractExploitDbFromText(ref?.description);
+    if (exploitDb) {
+      add(exploitDb, undefined, "exploitdb");
       continue;
     }
 
     if (source.includes("wordfence")) {
-      add("Wordfence Vulnerability", buildWordfenceUrl(finding, ref));
+      add("Wordfence Vulnerability", buildWordfenceUrl(finding, ref), "advisory");
       continue;
     }
 
@@ -158,13 +225,13 @@ function buildReferenceLinks(finding: any) {
         extractCveFromText(finding?.evidence);
 
       if (fallbackCve) {
-        add(fallbackCve, `https://nvd.nist.gov/vuln/detail/${fallbackCve}`);
+        add(fallbackCve, `https://nvd.nist.gov/vuln/detail/${fallbackCve}`, "cve");
       }
       continue;
     }
 
     if (source.includes("kev") || source.includes("cisa")) {
-      add("CISA KEV Catalog", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog");
+      add("KEV", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog", "kev");
     }
   }
 
@@ -176,12 +243,47 @@ function buildReferenceLinks(finding: any) {
     extractCveFromText(finding?.evidence);
 
   if (cveFromFinding) {
-    add(cveFromFinding, `https://nvd.nist.gov/vuln/detail/${cveFromFinding}`);
+    add(cveFromFinding, `https://nvd.nist.gov/vuln/detail/${cveFromFinding}`, "cve");
+  }
+
+  const cweFromFinding =
+    finding?.cwe ||
+    finding?.cwe_id ||
+    extractCweFromText(finding?.title) ||
+    extractCweFromText(finding?.description) ||
+    extractCweFromText(finding?.evidence);
+
+  if (cweFromFinding) {
+    add(
+      cweFromFinding,
+      `https://cwe.mitre.org/data/definitions/${String(cweFromFinding).replace("CWE-", "")}.html`,
+      "cwe"
+    );
+  }
+
+  const owaspFromFinding =
+    finding?.owasp_category ||
+    extractOwaspFromText(finding?.title) ||
+    extractOwaspFromText(finding?.description) ||
+    extractOwaspFromText(finding?.evidence);
+
+  if (owaspFromFinding) {
+    add(owaspFromFinding, "https://owasp.org/www-project-top-ten/", "owasp");
+  }
+
+  const exploitDbFromFinding =
+    finding?.exploitdb_id ||
+    extractExploitDbFromText(finding?.title) ||
+    extractExploitDbFromText(finding?.description) ||
+    extractExploitDbFromText(finding?.evidence);
+
+  if (exploitDbFromFinding) {
+    add(String(exploitDbFromFinding), undefined, "exploitdb");
   }
 
   const wordfenceUrl = buildWordfenceUrl(finding);
   if (wordfenceUrl) {
-    add("Wordfence Vulnerability", wordfenceUrl);
+    add("External advisory", wordfenceUrl, "advisory");
   }
 
   const evidence = String(finding?.evidence || "").toLowerCase();
@@ -192,10 +294,22 @@ function buildReferenceLinks(finding: any) {
     evidence.includes("known exploited") ||
     description.includes("known exploited")
   ) {
-    add("CISA KEV Catalog", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog");
+    add("KEV", "https://www.cisa.gov/known-exploited-vulnerabilities-catalog", "kev");
   }
 
   return Array.from(links.values());
+}
+
+function referenceBadgeClass(kind?: string) {
+  const value = String(kind || "").toLowerCase();
+
+  if (value.includes("cve") || value.includes("nvd")) return "bg-red-50 text-red-700 hover:bg-red-100";
+  if (value.includes("kev") || value.includes("cisa")) return "bg-orange-50 text-orange-700 hover:bg-orange-100";
+  if (value.includes("cwe")) return "bg-violet-50 text-violet-700 hover:bg-violet-100";
+  if (value.includes("owasp")) return "bg-blue-50 text-blue-700 hover:bg-blue-100";
+  if (value.includes("exploit")) return "bg-rose-50 text-rose-700 hover:bg-rose-100";
+
+  return "bg-slate-100 text-slate-700 hover:bg-blue-50 hover:text-blue-700";
 }
 
 function ReferenceLinks({ finding }: { finding: any }) {
@@ -210,17 +324,30 @@ function ReferenceLinks({ finding }: { finding: any }) {
       </p>
 
       <div className="mt-2 flex flex-wrap gap-2">
-        {links.map((link) => (
-          <a
-            key={link.url}
-            href={link.url}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
-          >
-            {link.label}
-          </a>
-        ))}
+        {links.map((link) =>
+          link.url ? (
+            <a
+              key={`${link.kind}:${link.label}:${link.url}`}
+              href={link.url}
+              target="_blank"
+              rel="noreferrer"
+              className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-medium transition ${referenceBadgeClass(
+                link.kind
+              )}`}
+            >
+              {link.label}
+            </a>
+          ) : (
+            <span
+              key={`${link.kind}:${link.label}`}
+              className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-medium ${referenceBadgeClass(
+                link.kind
+              )}`}
+            >
+              {link.label}
+            </span>
+          )
+        )}
       </div>
     </div>
   );
@@ -232,13 +359,70 @@ function StatCard({
   color = "text-slate-950",
 }: {
   label: string;
-  value: number;
+  value: number | string;
   color?: string;
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-sm font-medium text-slate-500">{label}</p>
       <p className={`mt-3 text-3xl font-semibold ${color}`}>{value}</p>
+    </div>
+  );
+}
+
+function FindingDetail({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: unknown;
+  mono?: boolean;
+}) {
+  if (value === null || value === undefined || value === "") return null;
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
+      <p
+        className={[
+          "mt-1 break-words text-sm leading-5 text-slate-700",
+          mono ? "font-mono text-xs" : "",
+        ].join(" ")}
+      >
+        {formatFieldValue(value)}
+      </p>
+    </div>
+  );
+}
+
+function formatVerificationSteps(value: unknown) {
+  if (!value) return null;
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === "string") return [value];
+  return null;
+}
+
+function FindingSummaryMeta({ finding }: { finding: any }) {
+  const affected = finding.request_url || finding.affected_parameter || finding.tested_parameter;
+  const retestStatus = finding.comparison_status || finding.retest_status;
+
+  if (!affected && !retestStatus) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+      {affected ? (
+        <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700">
+          Affected: {affected}
+        </span>
+      ) : null}
+      {retestStatus ? (
+        <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700">
+          Retest: {retestStatus}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -279,9 +463,13 @@ function FilterButton({
 }
 
 function FindingCard({ finding }: { finding: any }) {
+  const confidenceLabel = normalizeConfidence(finding);
+  const [expanded, setExpanded] = useState(false);
+  const verificationSteps = formatVerificationSteps(finding.verification_steps);
+
   return (
     <div className="px-6 py-4">
-      <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h4 className="font-medium text-slate-950">
@@ -304,9 +492,21 @@ function FindingCard({ finding }: { finding: any }) {
               {finding.category || "Security"}
             </span>
 
-            {finding.confidence ? (
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                {finding.confidence} confidence
+            <span
+              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${confidenceBadgeClass(
+                confidenceLabel
+              )}`}
+            >
+              {confidenceLabel} confidence
+              {finding.confidence_score !== null &&
+              finding.confidence_score !== undefined
+                ? ` · ${finding.confidence_score}`
+                : ""}
+            </span>
+
+            {finding.evidence_type ? (
+              <span className="rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+                {finding.evidence_type}
               </span>
             ) : null}
           </div>
@@ -317,14 +517,57 @@ function FindingCard({ finding }: { finding: any }) {
             </p>
           ) : null}
 
-          {finding.evidence ? (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Evidence
-              </p>
-              <p className="mt-1 break-words font-mono text-xs leading-5 text-slate-600">
-                {finding.evidence}
-              </p>
+          <FindingSummaryMeta finding={finding} />
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setExpanded((value) => !value)}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              {expanded ? "Hide evidence" : "Review evidence"}
+            </button>
+          </div>
+
+          {expanded ? (
+            <div className="mt-3 space-y-3">
+              {finding.evidence ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Evidence
+                  </p>
+                  <p className="mt-1 break-words font-mono text-xs leading-5 text-slate-600">
+                    {finding.evidence}
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <FindingDetail label="Payload used" value={finding.payload_used} mono />
+                <FindingDetail label="Evidence type" value={finding.evidence_type} />
+                <FindingDetail
+                  label="Response diff"
+                  value={finding.response_diff_summary}
+                  mono
+                />
+                <FindingDetail
+                  label="False positive notes"
+                  value={finding.false_positive_notes}
+                />
+              </div>
+
+              {verificationSteps?.length ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Verification steps
+                  </p>
+                  <ol className="mt-2 list-decimal space-y-1 pl-4 text-sm leading-6 text-slate-700">
+                    {verificationSteps.map((step, index) => (
+                      <li key={`${finding.id}-step-${index}`}>{step}</li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -346,6 +589,59 @@ function FindingCard({ finding }: { finding: any }) {
           {finding.is_confirmed ? "Confirmed" : "Detected"}
         </span>
       </div>
+    </div>
+  );
+}
+
+function FindingGroups({ findings }: { findings: any[] }) {
+  const mainFindings = findings.filter((finding) => !isInformationalObservation(finding));
+  const observations = findings.filter(isInformationalObservation);
+
+  if (findings.length === 0) {
+    return (
+      <div className="px-6 py-5 text-sm text-slate-500">
+        No issues found for this page.
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-slate-100">
+      {mainFindings.length > 0 ? (
+        <div>
+          <div className="bg-white px-6 py-3">
+            <h4 className="text-sm font-semibold text-slate-950">
+              Main Security Findings
+            </h4>
+            <p className="mt-1 text-xs text-slate-500">
+              Confirmed, high, and medium confidence findings.
+            </p>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {mainFindings.map((finding) => (
+              <FindingCard key={finding.id} finding={finding} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {observations.length > 0 ? (
+        <div>
+          <div className="bg-slate-50 px-6 py-3">
+            <h4 className="text-sm font-semibold text-slate-950">
+              Informational Observations
+            </h4>
+            <p className="mt-1 text-xs text-slate-500">
+              Low-confidence or informational signals that need review.
+            </p>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {observations.map((finding) => (
+              <FindingCard key={finding.id} finding={finding} />
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -374,11 +670,25 @@ export function ScanDetailSections({
     return findings.reduce(
       (acc, finding) => {
         const category = normalizeCategory(finding.category);
+        const confidence = normalizeConfidence(finding);
         acc.total += 1;
         acc[category] += 1;
+        if (confidence === "confirmed" || finding.is_confirmed) acc.confirmed += 1;
+        if (confidence === "high") acc.highConfidence += 1;
+        if (confidence === "medium") acc.mediumConfidence += 1;
+        if (isInformationalObservation(finding)) acc.informational += 1;
         return acc;
       },
-      { total: 0, security: 0, seo: 0, performance: 0 }
+      {
+        total: 0,
+        security: 0,
+        seo: 0,
+        performance: 0,
+        confirmed: 0,
+        highConfidence: 0,
+        mediumConfidence: 0,
+        informational: 0,
+      }
     );
   }, [findings]);
 
@@ -406,20 +716,38 @@ export function ScanDetailSections({
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-        <StatCard label="Pages Scanned" value={pages.length} />
-        <StatCard label="Issues Found" value={counts.total} />
-        <StatCard label="Security" value={counts.security} color="text-red-600" />
-        <StatCard label="SEO" value={counts.seo} color="text-blue-600" />
         <StatCard
-          label="Performance"
-          value={counts.performance}
+          label="Risk Score"
+          value={scan.risk_score ?? "—"}
+          color="text-red-600"
+        />
+        <StatCard label="Total Findings" value={counts.total} />
+        <StatCard
+          label="Confirmed Findings"
+          value={counts.confirmed}
+          color="text-emerald-600"
+        />
+        <StatCard
+          label="High Confidence"
+          value={counts.highConfidence}
+          color="text-red-600"
+        />
+        <StatCard
+          label="Medium Confidence"
+          value={counts.mediumConfidence}
           color="text-amber-600"
         />
         <StatCard
-          label="Technologies"
-          value={technologies.length}
-          color="text-emerald-600"
+          label="Informational Observations"
+          value={counts.informational}
+          color="text-blue-600"
         />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <StatCard label="Pages Scanned" value={pages.length} />
+        <StatCard label="Security Findings" value={counts.security} color="text-red-600" />
+        <StatCard label="Technologies" value={technologies.length} color="text-emerald-600" />
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -527,19 +855,7 @@ export function ScanDetailSections({
                   </div>
                 </button>
 
-                {isOpen ? (
-                  pageFindings.length === 0 ? (
-                    <div className="px-6 py-5 text-sm text-slate-500">
-                      No issues found for this page.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-100">
-                      {pageFindings.map((finding) => (
-                        <FindingCard key={finding.id} finding={finding} />
-                      ))}
-                    </div>
-                  )
-                ) : null}
+                {isOpen ? <FindingGroups findings={pageFindings} /> : null}
               </div>
             );
           })
@@ -554,11 +870,7 @@ export function ScanDetailSections({
               </p>
             </div>
 
-            <div className="divide-y divide-slate-100">
-              {generalFindings.map((finding) => (
-                <FindingCard key={finding.id} finding={finding} />
-              ))}
-            </div>
+            <FindingGroups findings={generalFindings} />
           </div>
         ) : null}
       </div>

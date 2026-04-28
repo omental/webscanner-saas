@@ -18,3 +18,4 @@ class Target(TimestampMixin, Base):
     user = relationship("User", back_populates="targets")
     organization = relationship("Organization", back_populates="targets")
     scans = relationship("Scan", back_populates="target")
+    scheduled_scans = relationship("ScheduledScan", back_populates="target")

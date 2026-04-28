@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from app.scanner.checks.sqli_light import extract_sqli_parameters
+from app.services.confidence import finding_confidence_metadata
 
 BOOLEAN_PROBE_PAIRS = (
     ("generic_boolean", "' AND '1'='1", "' AND '1'='2"),
@@ -31,6 +32,25 @@ class SqliAdvancedIssue:
     confidence: str | None
     evidence: str | None
     dedupe_key: str
+    confidence_level: str | None = None
+    confidence_score: int | None = None
+    evidence_type: str | None = None
+    verification_steps: list[str] | None = None
+    payload_used: str | None = None
+    affected_parameter: str | None = None
+    response_snippet: str | None = None
+    false_positive_notes: str | None = None
+    request_url: str | None = None
+    http_method: str | None = None
+    tested_parameter: str | None = None
+    payload: str | None = None
+    baseline_status_code: int | None = None
+    attack_status_code: int | None = None
+    baseline_response_size: int | None = None
+    attack_response_size: int | None = None
+    baseline_response_time_ms: int | None = None
+    attack_response_time_ms: int | None = None
+    response_diff_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -166,6 +186,34 @@ def check_boolean_sqli(
         f"baseline_status={baseline.status_code} true_status={true_response.status_code} "
         f"false_status={false_response.status_code} dbms_hint={dbms_hint or '-'}"
     )[:500]
+    metadata = finding_confidence_metadata(
+        context_validated=repeat_confirmed,
+        payload_reflected=True,
+        weak_signal_count=0 if repeat_confirmed else 1,
+        payload_used=dbms_hint or "boolean_probe_pair",
+        affected_parameter=param_name,
+        response_snippet=(false_response.body or "")[:240],
+        request_url=page_url,
+        http_method="GET",
+        tested_parameter=param_name,
+        payload=dbms_hint or "boolean_probe_pair",
+        baseline_status_code=baseline.status_code,
+        attack_status_code=false_response.status_code,
+        baseline_response_size=len(baseline.body) if baseline.body is not None else None,
+        attack_response_size=len(false_response.body) if false_response.body is not None else None,
+        baseline_response_time_ms=baseline.response_time_ms,
+        attack_response_time_ms=false_response.response_time_ms,
+        response_diff_summary=(
+            f"true_false_length_delta={length_delta}; "
+            f"baseline_status={baseline.status_code}; false_status={false_response.status_code}"
+        ),
+        verification_steps=[
+            "Replay the true and false boolean probes.",
+            "Confirm the false probe response differs while the true probe matches baseline.",
+            "Repeat the probe pair to rule out dynamic content drift.",
+        ],
+        false_positive_notes="Dynamic pages, personalization, or caching can mimic boolean response differences.",
+    )
 
     return [
         SqliAdvancedIssue(
@@ -180,6 +228,7 @@ def check_boolean_sqli(
             confidence=confidence,
             evidence=evidence,
             dedupe_key=f"{page_url}:{param_name}:boolean:sqli-advanced",
+            **metadata,
         )
     ]
 
@@ -215,6 +264,31 @@ def check_timing_sqli(
         f"timing_delta_ms={timing_delta} repeat_delta_ms={repeat_delta if repeat_delta is not None else '-'} "
         f"dbms_hint={dbms_hint or '-'}"
     )[:500]
+    metadata = finding_confidence_metadata(
+        time_based_confirmation=confirmed,
+        weak_signal_count=0 if confirmed else 2,
+        payload_used=dbms_hint or "timing_probe",
+        affected_parameter=param_name,
+        request_url=page_url,
+        http_method="GET",
+        tested_parameter=param_name,
+        payload=dbms_hint or "timing_probe",
+        baseline_status_code=baseline.status_code,
+        attack_status_code=timing_response.status_code,
+        baseline_response_size=len(baseline.body) if baseline.body is not None else None,
+        attack_response_size=len(timing_response.body) if timing_response.body is not None else None,
+        baseline_response_time_ms=baseline.response_time_ms,
+        attack_response_time_ms=timing_response.response_time_ms,
+        response_diff_summary=(
+            f"timing_delta_ms={timing_delta}; "
+            f"repeat_delta_ms={repeat_delta if repeat_delta is not None else '-'}"
+        ),
+        verification_steps=[
+            "Replay the baseline and timing probe requests.",
+            "Repeat the timing probe and compare latency against baseline.",
+        ],
+        false_positive_notes="Network latency or backend load can cause false timing signals without repeat confirmation.",
+    )
 
     return [
         SqliAdvancedIssue(
@@ -229,5 +303,6 @@ def check_timing_sqli(
             confidence=confidence,
             evidence=evidence,
             dedupe_key=f"{page_url}:{param_name}:timing:sqli-advanced",
+            **metadata,
         )
     ]

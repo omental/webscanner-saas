@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
+from app.services.confidence import finding_confidence_metadata
+
 RCE_PARAM_NAMES = {
     "cmd",
     "command",
@@ -68,6 +70,25 @@ class RceIssue:
     confidence: str | None
     evidence: str | None
     dedupe_key: str
+    confidence_level: str | None = None
+    confidence_score: int | None = None
+    evidence_type: str | None = None
+    verification_steps: list[str] | None = None
+    payload_used: str | None = None
+    affected_parameter: str | None = None
+    response_snippet: str | None = None
+    false_positive_notes: str | None = None
+    request_url: str | None = None
+    http_method: str | None = None
+    tested_parameter: str | None = None
+    payload: str | None = None
+    baseline_status_code: int | None = None
+    attack_status_code: int | None = None
+    baseline_response_size: int | None = None
+    attack_response_size: int | None = None
+    baseline_response_time_ms: int | None = None
+    attack_response_time_ms: int | None = None
+    response_diff_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,6 +202,28 @@ def check_rce_response(
         f"url={page_url} parameter={param_name} probe_family={probe_family} "
         f"evidence_type={signal.evidence_type} snippet={signal.snippet}"
     )[:500]
+    transformed_marker = signal.evidence_type == "marker_transformed"
+    metadata = finding_confidence_metadata(
+        context_validated=transformed_marker,
+        payload_reflected=transformed_marker,
+        known_error_signature=not transformed_marker,
+        weak_signal_count=0 if transformed_marker else 1,
+        payload_used=probe_family,
+        affected_parameter=param_name,
+        response_snippet=signal.snippet[:240],
+        request_url=page_url,
+        http_method="GET",
+        tested_parameter=param_name,
+        payload=probe_family,
+        attack_response_size=len(response_body) if response_body is not None else None,
+        response_diff_summary=f"evidence_type={signal.evidence_type}",
+        verification_steps=[
+            "Replay the inert RCE/template probe.",
+            "Confirm the transformed marker or backend error is caused by the probed parameter.",
+            "Verify no destructive command or file access was attempted.",
+        ],
+        false_positive_notes="Backend template or command errors can be generic parser errors unless tied to the probe.",
+    )
 
     return [
         RceIssue(
@@ -195,5 +238,6 @@ def check_rce_response(
             confidence=signal.confidence,
             evidence=evidence,
             dedupe_key=f"{page_url}:{param_name}:{signal.evidence_type}:rce-signal",
+            **metadata,
         )
     ]

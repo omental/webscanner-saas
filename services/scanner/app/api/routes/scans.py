@@ -21,9 +21,18 @@ from app.models.user import User
 from app.schemas.detected_technology import DetectedTechnologyRead
 from app.schemas.finding import FindingRead
 from app.schemas.finding_reference import FindingReferenceRead
-from app.schemas.scan import ScanCreate, ScanDetailRead, ScanRead
+from app.schemas.scan import (
+    ScanComparisonRead,
+    ScanCreate,
+    ScanDetailRead,
+    ScanRead,
+)
 from app.schemas.scan_page import ScanPageRead
 from app.schemas.target import TargetRead
+from app.services.comparison_service import (
+    compare_scan_findings,
+    get_comparison_summary,
+)
 from app.services.llm.factory import get_llm_provider
 from app.services.report_sanitizer import build_sanitized_scan_report_data
 from app.services.report_service import get_scan_report_pdf
@@ -47,7 +56,9 @@ CurrentUser = Annotated[User, Depends(require_authenticated_user)]
 AdminUser = Annotated[User, Depends(require_admin_or_super_admin)]
 
 
-def _serialize_scan(scan: Scan) -> ScanRead:
+def _serialize_scan(
+    scan: Scan, comparison_summary: dict[str, int] | None = None
+) -> ScanRead:
     return ScanRead.model_validate(
         {
             "id": scan.id,
@@ -55,12 +66,16 @@ def _serialize_scan(scan: Scan) -> ScanRead:
             "organization_id": scan.organization_id,
             "target_id": scan.target_id,
             "scan_type": scan.scan_type,
+            "scan_profile": scan.scan_profile or "standard",
             "status": scan.status,
             "total_pages_found": scan.total_pages_found or 0,
             "total_findings": scan.total_findings or 0,
+            "risk_score": scan.risk_score,
             "max_depth": scan.max_depth,
             "max_pages": scan.max_pages,
             "timeout_seconds": scan.timeout_seconds,
+            "previous_scan_id": scan.previous_scan_id,
+            "comparison_summary": comparison_summary,
             "error_message": scan.error_message,
             "started_at": scan.started_at,
             "finished_at": scan.finished_at,
@@ -115,6 +130,27 @@ def _serialize_finding(finding: Finding) -> FindingRead:
             "description": finding.description,
             "severity": finding.severity,
             "confidence": finding.confidence,
+            "confidence_level": finding.confidence_level,
+            "confidence_score": finding.confidence_score,
+            "evidence_type": finding.evidence_type,
+            "verification_steps": finding.verification_steps,
+            "payload_used": finding.payload_used,
+            "affected_parameter": finding.affected_parameter,
+            "response_snippet": finding.response_snippet,
+            "false_positive_notes": finding.false_positive_notes,
+            "request_url": finding.request_url,
+            "http_method": finding.http_method,
+            "tested_parameter": finding.tested_parameter,
+            "payload": finding.payload,
+            "baseline_status_code": finding.baseline_status_code,
+            "attack_status_code": finding.attack_status_code,
+            "baseline_response_size": finding.baseline_response_size,
+            "attack_response_size": finding.attack_response_size,
+            "baseline_response_time_ms": finding.baseline_response_time_ms,
+            "attack_response_time_ms": finding.attack_response_time_ms,
+            "response_diff_summary": finding.response_diff_summary,
+            "deduplication_key": finding.deduplication_key,
+            "comparison_status": finding.comparison_status,
             "evidence": finding.evidence,
             "remediation": finding.remediation,
             "is_confirmed": finding.is_confirmed,
@@ -124,6 +160,36 @@ def _serialize_finding(finding: Finding) -> FindingRead:
             ],
             "created_at": finding.created_at,
             "updated_at": finding.updated_at,
+        }
+    )
+
+
+def _serialize_scan_comparison(comparison) -> ScanComparisonRead:
+    return ScanComparisonRead.model_validate(
+        {
+            "previous_scan_id": comparison.previous_scan_id,
+            "current_scan_id": comparison.current_scan_id,
+            "fixed_findings": [
+                _serialize_finding(finding)
+                for finding in comparison.fixed_findings
+            ],
+            "still_vulnerable_findings": [
+                _serialize_finding(finding)
+                for finding in comparison.still_vulnerable_findings
+            ],
+            "new_findings": [
+                _serialize_finding(finding)
+                for finding in comparison.new_findings
+            ],
+            "existing_findings": [
+                _serialize_finding(finding)
+                for finding in comparison.existing_findings
+            ],
+            "not_retested_findings": [
+                _serialize_finding(finding)
+                for finding in comparison.not_retested_findings
+            ],
+            "summary": comparison.summary,
         }
     )
 
@@ -174,9 +240,15 @@ async def create_scan_endpoint(
 
 
 @router.get("", response_model=list[ScanRead])
-async def list_scans_endpoint(session: DbSession, current_user: CurrentUser) -> list[ScanRead]:
+async def list_scans_endpoint(
+    session: DbSession, current_user: CurrentUser
+) -> list[ScanRead]:
     scans = await list_scans_for_actor(session, current_user)
-    return [_serialize_scan(scan) for scan in scans]
+    scan_reads: list[ScanRead] = []
+    for scan in scans:
+        comparison_summary = await get_comparison_summary(session, scan)
+        scan_reads.append(_serialize_scan(scan, comparison_summary))
+    return scan_reads
 
 
 @router.get("/{scan_id}", response_model=ScanDetailRead)
@@ -188,7 +260,8 @@ async def get_scan_detail_endpoint(
     pages = await list_scan_pages(session, scan_id)
     findings = await list_findings(session, scan_id)
     technologies = await list_detected_technologies(session, scan_id)
-    scan_read = _serialize_scan(scan).model_dump()
+    comparison_summary = await get_comparison_summary(session, scan)
+    scan_read = _serialize_scan(scan, comparison_summary).model_dump()
     return ScanDetailRead.model_validate(
         {
             **scan_read,
@@ -202,6 +275,42 @@ async def get_scan_detail_endpoint(
             ],
         }
     )
+
+
+@router.post(
+    "/{scan_id}/retest",
+    response_model=ScanRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def retest_scan_endpoint(
+    scan_id: int,
+    background_tasks: BackgroundTasks,
+    session: DbSession,
+    admin: AdminUser,
+) -> ScanRead:
+    previous_scan = await require_scan_access(session, scan_id, admin)
+    payload = ScanCreate(
+        user_id=previous_scan.user_id,
+        target_id=previous_scan.target_id,
+        scan_type=previous_scan.scan_type,
+        scan_profile=previous_scan.scan_profile or "standard",
+        max_depth=previous_scan.max_depth,
+        max_pages=previous_scan.max_pages,
+        timeout_seconds=previous_scan.timeout_seconds,
+        previous_scan_id=previous_scan.id,
+    )
+    scan = await create_scan_for_actor(session, payload, admin)
+    background_tasks.add_task(run_scan, scan.id)
+    return _serialize_scan(scan)
+
+
+@router.get("/{scan_id}/compare", response_model=ScanComparisonRead)
+async def compare_scan_endpoint(
+    scan_id: int, session: DbSession, current_user: CurrentUser
+) -> ScanComparisonRead:
+    scan = await require_scan_access(session, scan_id, current_user)
+    comparison = await compare_scan_findings(session, scan, persist=True)
+    return _serialize_scan_comparison(comparison)
 
 
 @router.post("/{scan_id}/cancel", response_model=ScanRead)
@@ -236,7 +345,10 @@ async def list_technologies_endpoint(
 ) -> list[DetectedTechnologyRead]:
     await require_scan_access(session, scan_id, current_user)
     technologies = await list_detected_technologies(session, scan_id)
-    return [_serialize_detected_technology(technology) for technology in technologies]
+    return [
+        _serialize_detected_technology(technology)
+        for technology in technologies
+    ]
 
 
 @router.get("/{scan_id}/report.pdf")

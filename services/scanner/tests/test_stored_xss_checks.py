@@ -133,7 +133,7 @@ def test_raw_stored_marker_detection() -> None:
     assert issues[0].category == "stored_xss"
     assert issues[0].severity == "medium"
     assert issues[0].confidence == "medium"
-    assert "context=html_text" in (issues[0].evidence or "")
+    assert "context=html_body" in (issues[0].evidence or "")
 
 
 def test_escaped_marker_low_confidence_detection() -> None:
@@ -161,7 +161,7 @@ def test_script_block_context_detection() -> None:
     )
 
     assert detection is not None
-    assert detection.context == "script_block"
+    assert detection.context == "javascript_string"
     assert detection.severity == "high"
 
 

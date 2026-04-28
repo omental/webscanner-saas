@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from html import unescape
 from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 
+from app.services.confidence import finding_confidence_metadata
+from app.services.xss_context import classify_xss_context
+
 REFLECTION_MARKER_PREFIX = "SCANNER_XSS_MARKER_"
 _INPUT_PATTERN = re.compile(
     r'<input[^>]+name=["\']?([a-zA-Z0-9_-]+)["\']?', re.IGNORECASE
@@ -33,6 +36,25 @@ class ReflectedXssIssue:
     confidence: str | None
     evidence: str | None
     dedupe_key: str
+    confidence_level: str | None = None
+    confidence_score: int | None = None
+    evidence_type: str | None = None
+    verification_steps: list[str] | None = None
+    payload_used: str | None = None
+    affected_parameter: str | None = None
+    response_snippet: str | None = None
+    false_positive_notes: str | None = None
+    request_url: str | None = None
+    http_method: str | None = None
+    tested_parameter: str | None = None
+    payload: str | None = None
+    baseline_status_code: int | None = None
+    attack_status_code: int | None = None
+    baseline_response_size: int | None = None
+    attack_response_size: int | None = None
+    baseline_response_time_ms: int | None = None
+    attack_response_time_ms: int | None = None
+    response_diff_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -136,16 +158,11 @@ def classify_reflection_context(
         return None
 
     if marker in response_body:
-        if _marker_is_in_script_block(marker, response_body):
-            return ReflectionMatch("script_block", "high", marker, True)
-
-        if _marker_is_in_attribute(marker, response_body):
-            return ReflectionMatch("html_attribute", "high", marker, True)
-
-        if not _marker_is_inside_tag(marker, response_body):
-            return ReflectionMatch("html_text", "medium", marker, True)
-
-        return ReflectionMatch("unknown", "medium", marker, True)
+        context = classify_xss_context(response_body, marker)
+        if not context["reflected"]:
+            return None
+        confidence = "high" if context["executable_context"] else "medium"
+        return ReflectionMatch(str(context["context"]), confidence, marker, True)
 
     for encoded_marker in _encoded_marker_variants(marker):
         if encoded_marker and encoded_marker != marker and encoded_marker in response_body:
@@ -177,6 +194,38 @@ def check_reflected_xss(
         f"parameter={param_name} url={page_url} context={reflection.context}"
         f" raw={str(reflection.raw_reflection).lower()} snippet={snippet}"
     )[:500]
+    context = classify_xss_context(response_body or "", marker)
+    executable_context = bool(context["executable_context"])
+    false_positive_notes = None
+    if not executable_context:
+        false_positive_notes = (
+            "Reflected input was not observed in an executable context; "
+            "manual verification is required."
+        )
+    metadata = finding_confidence_metadata(
+        context_validated=executable_context,
+        payload_reflected=reflection.raw_reflection,
+        weak_signal_count=0 if executable_context else 1,
+        payload_used="[safe inert XSS marker]",
+        affected_parameter=param_name,
+        response_snippet=snippet[:240],
+        request_url=page_url,
+        http_method="GET",
+        tested_parameter=param_name,
+        payload=marker,
+        attack_response_size=len(response_body) if response_body is not None else None,
+        response_diff_summary=(
+            f"context={reflection.context}; raw_reflection={str(reflection.raw_reflection).lower()}"
+            f"; executable_context={str(executable_context).lower()}; summary={context['summary']}"
+        ),
+        verification_steps=[
+            "Replay the request with a safe marker value.",
+            f"Confirm the marker is reflected in {reflection.context} context.",
+            "Assess whether output encoding prevents script execution.",
+        ],
+        false_positive_notes=false_positive_notes
+        or "A reflected marker is not exploitable if output encoding fully neutralizes execution.",
+    )
 
     return [
         ReflectedXssIssue(
@@ -188,8 +237,9 @@ def check_reflected_xss(
             ),
             severity="medium",
             remediation="Encode untrusted input in responses and validate or sanitize reflected parameters.",
-            confidence=reflection.confidence,
+            confidence=str(metadata["confidence_level"]),
             evidence=evidence,
             dedupe_key=f"{page_url}:{param_name}:{reflection.context}:reflected-xss",
+            **metadata,
         )
     ]

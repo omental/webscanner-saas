@@ -22,3 +22,4 @@ class User(TimestampMixin, Base):
     organization = relationship("Organization", back_populates="users")
     targets = relationship("Target", back_populates="user")
     scans = relationship("Scan", back_populates="user")
+    scheduled_scans = relationship("ScheduledScan", back_populates="created_by_user")

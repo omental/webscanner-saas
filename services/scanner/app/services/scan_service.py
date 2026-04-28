@@ -2,27 +2,34 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.detected_technology import DetectedTechnology
 from app.models.finding import Finding
 from app.models.scan import Scan
 from app.models.scan_page import ScanPage
 from app.schemas.scan import ScanCreate
+from app.services.comparison_service import (
+    compare_scan_findings,
+    mark_previous_findings_not_retested,
+)
 from app.services.organization_service import require_organization
 from app.services.subscription_service import check_org_subscription
 from app.services.target_service import get_target_by_id
 from app.services.usage_service import enforce_weekly_scan_limit
 from app.services.usage_service import enforce_trial_scan_limit
 from app.services.user_service import get_user_by_id
+from app.services.risk_score import calculate_scan_risk_score
 
 
 async def create_scan(session: AsyncSession, payload: ScanCreate) -> Scan:
     return await create_scan_for_actor(session, payload, actor=None)
 
 
-async def create_scan_for_actor(session: AsyncSession, payload: ScanCreate, actor) -> Scan:
+async def create_scan_for_actor(
+    session: AsyncSession, payload: ScanCreate, actor
+) -> Scan:
     user = await get_user_by_id(session, payload.user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -30,6 +37,15 @@ async def create_scan_for_actor(session: AsyncSession, payload: ScanCreate, acto
     target = await get_target_by_id(session, payload.target_id)
     if target is None:
         raise HTTPException(status_code=404, detail="Target not found")
+    previous_scan = None
+    if payload.previous_scan_id is not None:
+        previous_scan = await get_scan_by_id(session, payload.previous_scan_id)
+        if previous_scan is None:
+            raise HTTPException(status_code=404, detail="Previous scan not found")
+        if previous_scan.target_id != payload.target_id:
+            raise HTTPException(
+                status_code=400, detail="Previous scan target does not match"
+            )
     if actor is not None:
         if actor.role == "team_member":
             raise HTTPException(status_code=403, detail="Team members cannot create scans")
@@ -51,6 +67,14 @@ async def create_scan_for_actor(session: AsyncSession, payload: ScanCreate, acto
 
     values = payload.model_dump()
     values["organization_id"] = target.organization_id or user.organization_id
+    if (
+        previous_scan is not None
+        and previous_scan.organization_id != values["organization_id"]
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Previous scan organization does not match",
+        )
     scan = Scan(**values)
     session.add(scan)
     await session.commit()
@@ -119,6 +143,7 @@ async def mark_scan_running(session: AsyncSession, scan: Scan) -> Scan:
     scan.status = "running"
     scan.started_at = datetime.now(timezone.utc)
     scan.finished_at = None
+    scan.risk_score = None
     scan.error_message = None
     await session.commit()
     await session.refresh(scan)
@@ -128,13 +153,21 @@ async def mark_scan_running(session: AsyncSession, scan: Scan) -> Scan:
 async def mark_scan_completed(
     session: AsyncSession, scan: Scan, total_pages_found: int, total_findings: int
 ) -> Scan:
+    findings_result = await session.execute(
+        select(Finding).where(Finding.scan_id == scan.id)
+    )
+    risk_result = calculate_scan_risk_score(findings_result.scalars().all())
     scan.status = "completed"
     scan.total_pages_found = total_pages_found
     scan.total_findings = total_findings
+    scan.risk_score = risk_result.risk_score
     scan.error_message = None
     scan.finished_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(scan)
+    if scan.previous_scan_id is not None:
+        await compare_scan_findings(session, scan)
+        await session.refresh(scan)
     return scan
 
 
@@ -152,6 +185,9 @@ async def mark_scan_failed(
     scan.finished_at = datetime.now(timezone.utc)
     await session.commit()
     await session.refresh(scan)
+    if scan.previous_scan_id is not None:
+        await mark_previous_findings_not_retested(session, scan)
+        await session.refresh(scan)
     return scan
 
 
