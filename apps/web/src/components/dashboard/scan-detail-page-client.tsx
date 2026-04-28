@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api-client";
 import { Scan } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/toast-provider";
 import { ScanDetailSections } from "@/components/dashboard/scan-detail-sections";
 import { AiReportSection } from "@/components/dashboard/ai-report-section";
 import { ScanProgressPanel } from "@/components/dashboard/scan-progress-panel";
@@ -19,16 +21,46 @@ function isDoneScan(status?: string) {
 }
 
 export function ScanDetailPageClient({ scanId }: { scanId: number }) {
+  const router = useRouter();
+  const { showToast } = useToast();
   const [scan, setScan] = useState<Scan | null>(null);
   const [pages, setPages] = useState<any[]>([]);
   const [findings, setFindings] = useState<any[]>([]);
   const [technologies, setTechnologies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [softRefreshing, setSoftRefreshing] = useState(false);
+  const [retesting, setRetesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const previousStatusRef = useRef<string | null>(null);
+
+  const handleRetest = useCallback(async () => {
+    if (retesting) return;
+
+    setRetesting(true);
+    try {
+      const newScan = await apiClient.retestScan(scanId);
+      showToast(
+        `Retest started. New scan #${newScan.id} is queued.`,
+        "success"
+      );
+
+      if (newScan?.id && newScan.id !== scanId) {
+        router.push(`/dashboard/scans/${newScan.id}`);
+      }
+    } catch (err) {
+      console.error("Failed to start retest", err);
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Unable to start retest.";
+      showToast(message, "error");
+      setError(message);
+    } finally {
+      setRetesting(false);
+    }
+  }, [retesting, scanId, router, showToast]);
 
   const loadScanDetails = useCallback(
     async (silent = false) => {
@@ -193,6 +225,20 @@ export function ScanDetailPageClient({ scanId }: { scanId: number }) {
 
           <Button variant="secondary" onClick={() => void loadScanDetails(false)}>
             Refresh
+          </Button>
+
+          <Button
+            variant="primary"
+            onClick={() => void handleRetest()}
+            disabled={retesting || isActiveScan(scan?.status)}
+            aria-busy={retesting}
+            title={
+              isActiveScan(scan?.status)
+                ? "Wait for the current scan to finish before retesting."
+                : "Run this scan again against the same target."
+            }
+          >
+            {retesting ? "Starting retest..." : "Retest Scan"}
           </Button>
         </div>
       </div>

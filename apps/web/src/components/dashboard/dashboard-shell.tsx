@@ -22,6 +22,7 @@ const superAdminNav: NavItem[] = [
   { label: "Admin Billing", href: "/dashboard/admin-billing" },
   { label: "Targets", href: "/dashboard/targets" },
   { label: "Scans", href: "/dashboard/scans" },
+  { label: "Scheduled Scans", href: "/dashboard/scheduled-scans" },
   { label: "Profile", href: "/dashboard/profile" },
 ];
 
@@ -29,6 +30,7 @@ const adminNav: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Targets", href: "/dashboard/targets" },
   { label: "Scans", href: "/dashboard/scans" },
+  { label: "Scheduled Scans", href: "/dashboard/scheduled-scans" },
   { label: "Users", href: "/dashboard/users" },
   { label: "Invoices", href: "/dashboard/invoices" },
   { label: "Profile", href: "/dashboard/profile" },
@@ -37,6 +39,7 @@ const adminNav: NavItem[] = [
 const teamMemberNav: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Scans", href: "/dashboard/scans" },
+  { label: "Scheduled Scans", href: "/dashboard/scheduled-scans" },
   { label: "Profile", href: "/dashboard/profile" },
 ];
 

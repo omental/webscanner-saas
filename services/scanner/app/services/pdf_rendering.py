@@ -14,6 +14,10 @@ from reportlab.platypus import Paragraph, Table, TableStyle
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _WHITESPACE = re.compile(r"[ \t\r\f\v]+")
 _PIPE_TABLE_SEPARATOR = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
+_MARKDOWN_BOLD = re.compile(r"\*\*(.*?)\*\*")
+_MARKDOWN_ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)")
+_INLINE_CODE = re.compile(r"`([^`]*)`")
+
 _ASCII_FALLBACKS = {
     "\u00b0": " deg ",
     "\u00b1": "+/-",
@@ -27,14 +31,24 @@ _ASCII_FALLBACKS = {
 
 
 def sanitize_pdf_text(value: Any) -> str:
-    """Return text that is safe to feed into ReportLab's base PDF fonts."""
+    """Return text that is safe to feed into ReportLab base PDF fonts."""
     if value is None:
         return ""
 
     text = str(value)
+
     replacements = {
         "\u00a0": " ",
         "\u00ad": "",
+        "\u200b": "",
+        "\u200c": "",
+        "\u200d": "",
+        "\ufeff": "",
+        "\ufffe": "-",
+        "\ufffd": "",
+        "■": "-",
+        "￾": "-",
+
         "\u2010": "-",
         "\u2011": "-",
         "\u2012": "-",
@@ -43,6 +57,7 @@ def sanitize_pdf_text(value: Any) -> str:
         "\u2015": "-",
         "\u2212": "-",
         "\u2043": "-",
+
         "\u2022": "-",
         "\u2023": "-",
         "\u25e6": "-",
@@ -55,17 +70,19 @@ def sanitize_pdf_text(value: Any) -> str:
         "\u25a1": "-",
         "\u25fd": "-",
         "\u25fe": "-",
-        "\ufffd": "",
+
         "\u2192": "->",
         "\u21d2": "=>",
         "\u2190": "<-",
         "\u21d0": "<=",
         "\u2194": "<->",
         "\u21d4": "<=>",
+
         "\u2713": "yes",
         "\u2714": "yes",
         "\u2717": "no",
         "\u2718": "no",
+
         "\u2018": "'",
         "\u2019": "'",
         "\u201a": "'",
@@ -75,18 +92,37 @@ def sanitize_pdf_text(value: Any) -> str:
         "\u201e": '"',
         "\u2026": "...",
     }
+
     for source, target in replacements.items():
         text = text.replace(source, target)
+
     for source, target in _ASCII_FALLBACKS.items():
         text = text.replace(source, target)
+
+    # Remove simple markdown markers that were appearing literally in PDF cells.
+    text = _INLINE_CODE.sub(r"\1", text)
+    text = _MARKDOWN_BOLD.sub(r"\1", text)
+    text = _MARKDOWN_ITALIC.sub(r"\1", text)
 
     text = unicodedata.normalize("NFKC", text)
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
+
+    # Keep only ASCII plus newlines for Helvetica-safe output.
     text = "".join(ch if ch == "\n" or ord(ch) < 128 else " " for ch in text)
-    text = "".join(ch if ch == "\n" or ord(ch) >= 32 else " " for ch in text)
+
+    # Fix missing spaces after common punctuation.
+    text = re.sub(r":(?=\S)", ": ", text)
+    text = re.sub(r",(?!\s)(?=[A-Za-z])", ", ", text)
+    text = re.sub(r"\.(?!\s)(?=[A-Z])", ". ", text)
+
+    # Fix common collapsed phrase patterns without damaging URLs too much.
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+
+    # Normalize whitespace line-by-line.
     text = _CONTROL_CHARS.sub(" ", text)
     text = "\n".join(_WHITESPACE.sub(" ", line).strip() for line in text.splitlines())
+
     return text.strip()
 
 
@@ -107,12 +143,21 @@ def build_pdf_table(
     header_text=colors.HexColor("#0f172a"),
     grid_color=colors.HexColor("#cbd5e1"),
 ) -> Table:
+    """Build a readable ReportLab table with wrapped paragraph cells."""
     table_data: list[list[Any]] = []
-    for row in data:
-        cell_style = styles["table_header" if not table_data else "table_cell"]
+
+    for row_index, row in enumerate(data):
+        cell_style = styles["table_header"] if row_index == 0 else styles["table_cell"]
         table_data.append([paragraph_cell(cell, cell_style) for cell in row])
 
-    table = Table(table_data, colWidths=col_widths, repeatRows=1, splitByRow=1)
+    table = Table(
+        table_data,
+        colWidths=col_widths,
+        repeatRows=1,
+        splitByRow=1,
+        hAlign="LEFT",
+    )
+
     table.setStyle(
         TableStyle(
             [
@@ -128,28 +173,34 @@ def build_pdf_table(
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 6),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ]
         )
     )
+
     return table
 
 
 def is_markdown_table_block(lines: list[str]) -> bool:
     if len(lines) < 2:
         return False
+
     first = sanitize_pdf_text(lines[0])
     second = sanitize_pdf_text(lines[1])
+
     return "|" in first and _PIPE_TABLE_SEPARATOR.match(second) is not None
 
 
 def _split_markdown_table_row(line: str) -> list[str]:
     line = sanitize_pdf_text(line).strip()
+
     if line.startswith("|"):
         line = line[1:]
+
     if line.endswith("|"):
         line = line[:-1]
+
     return [cell.strip() for cell in line.split("|")]
 
 
@@ -159,23 +210,62 @@ def parse_markdown_table(lines: list[str]) -> list[list[str]] | None:
 
     rows: list[list[str]] = []
     expected_width: int | None = None
+
     for index, line in enumerate(lines):
         if index == 1:
             continue
+
         if "|" not in line:
             break
+
         row = _split_markdown_table_row(line)
+
         if not any(row):
             continue
+
         if expected_width is None:
             expected_width = len(row)
+
         if len(row) != expected_width:
             return None
+
         rows.append(row)
 
     if len(rows) < 2:
         return None
+
     return rows
+
+
+def _column_widths_for_table(column_count: int, usable_width: float) -> list[float]:
+    """Return safe widths that prevent narrow columns from splitting words badly."""
+    if column_count <= 0:
+        return []
+
+    if column_count == 2:
+        return [usable_width * 0.42, usable_width * 0.58]
+
+    if column_count == 3:
+        return [usable_width * 0.42, usable_width * 0.22, usable_width * 0.36]
+
+    if column_count == 4:
+        return [
+            usable_width * 0.08,
+            usable_width * 0.56,
+            usable_width * 0.17,
+            usable_width * 0.19,
+        ]
+
+    if column_count == 5:
+        return [
+            usable_width * 0.08,
+            usable_width * 0.40,
+            usable_width * 0.17,
+            usable_width * 0.17,
+            usable_width * 0.18,
+        ]
+
+    return [usable_width / column_count] * column_count
 
 
 def markdown_table_to_pdf_table(
@@ -184,21 +274,16 @@ def markdown_table_to_pdf_table(
     usable_width: float,
 ) -> Table | None:
     rows = parse_markdown_table(lines)
+
     if not rows:
         return None
 
     column_count = len(rows[0])
+
     if column_count <= 0:
         return None
 
-    if column_count == 2:
-        col_widths = [usable_width * 0.35, usable_width * 0.65]
-    elif column_count == 3:
-        col_widths = [usable_width * 0.32, usable_width * 0.28, usable_width * 0.40]
-    elif column_count == 4:
-        col_widths = [0.35 * inch, usable_width * 0.52, usable_width * 0.22, usable_width * 0.18]
-    else:
-        col_widths = [usable_width / column_count] * column_count
+    col_widths = _column_widths_for_table(column_count, usable_width)
 
     total_width = sum(col_widths)
     if total_width > usable_width:
@@ -210,10 +295,12 @@ def markdown_table_to_pdf_table(
 
 def strip_markdown_table_pipes(lines: list[str]) -> str:
     parsed = parse_markdown_table(lines)
+
     if not parsed:
         return " ".join(
             sanitize_pdf_text(line).replace("|", " ").strip()
             for line in lines
             if line.strip()
         )
+
     return "; ".join(" - ".join(cell for cell in row if cell) for row in parsed)

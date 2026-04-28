@@ -405,11 +405,32 @@ function formatVerificationSteps(value: unknown) {
   return null;
 }
 
+function retestStatusLabel(status?: string | null) {
+  const value = String(status || "").toLowerCase();
+  if (value === "fixed") return "Fixed";
+  if (value === "still_vulnerable") return "Still vulnerable";
+  if (value === "new") return "New";
+  if (value === "existing") return "Existing";
+  if (value === "not_retested") return "Not retested";
+  return status ? String(status) : null;
+}
+
+function retestStatusBadgeClass(status?: string | null) {
+  const value = String(status || "").toLowerCase();
+  if (value === "fixed") return "bg-emerald-50 text-emerald-700";
+  if (value === "still_vulnerable") return "bg-red-50 text-red-700";
+  if (value === "new") return "bg-blue-50 text-blue-700";
+  if (value === "existing") return "bg-amber-50 text-amber-700";
+  if (value === "not_retested") return "bg-slate-100 text-slate-600";
+  return "bg-indigo-50 text-indigo-700";
+}
+
 function FindingSummaryMeta({ finding }: { finding: any }) {
   const affected = finding.request_url || finding.affected_parameter || finding.tested_parameter;
   const retestStatus = finding.comparison_status || finding.retest_status;
+  const retestLabel = retestStatusLabel(retestStatus);
 
-  if (!affected && !retestStatus) return null;
+  if (!affected && !retestLabel) return null;
 
   return (
     <div className="mt-3 flex flex-wrap gap-2 text-xs">
@@ -418,9 +439,13 @@ function FindingSummaryMeta({ finding }: { finding: any }) {
           Affected: {affected}
         </span>
       ) : null}
-      {retestStatus ? (
-        <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700">
-          Retest: {retestStatus}
+      {retestLabel ? (
+        <span
+          className={`rounded-full px-2.5 py-1 font-medium ${retestStatusBadgeClass(
+            retestStatus
+          )}`}
+        >
+          Retest: {retestLabel}
         </span>
       ) : null}
     </div>
@@ -646,6 +671,85 @@ function FindingGroups({ findings }: { findings: any[] }) {
   );
 }
 
+function RetestOutcomesCard({
+  scan,
+  findings,
+}: {
+  scan: Scan;
+  findings: any[];
+}) {
+  if (!scan.previous_scan_id) return null;
+
+  const summary = scan.comparison_summary || {};
+  const computedFromFindings = findings.reduce(
+    (acc, finding) => {
+      const status = String(finding?.comparison_status || "").toLowerCase();
+      if (status === "fixed") acc.fixed += 1;
+      else if (status === "still_vulnerable") acc.still_vulnerable += 1;
+      else if (status === "new") acc.new += 1;
+      else if (status === "existing") acc.existing += 1;
+      else if (status === "not_retested") acc.not_retested += 1;
+      return acc;
+    },
+    { fixed: 0, still_vulnerable: 0, new: 0, existing: 0, not_retested: 0 }
+  );
+
+  const counts = {
+    fixed: Number(summary.fixed ?? computedFromFindings.fixed),
+    still_vulnerable: Number(
+      summary.still_vulnerable ?? computedFromFindings.still_vulnerable
+    ),
+    new: Number(summary.new ?? computedFromFindings.new),
+    existing: Number(summary.existing ?? computedFromFindings.existing),
+    not_retested: Number(
+      summary.not_retested ?? computedFromFindings.not_retested
+    ),
+  };
+
+  const items = [
+    { key: "fixed", label: "Fixed", value: counts.fixed },
+    {
+      key: "still_vulnerable",
+      label: "Still vulnerable",
+      value: counts.still_vulnerable,
+    },
+    { key: "new", label: "New", value: counts.new },
+    { key: "existing", label: "Existing", value: counts.existing },
+    { key: "not_retested", label: "Not retested", value: counts.not_retested },
+  ];
+
+  return (
+    <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-5 shadow-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <p className="text-sm font-medium uppercase tracking-wide text-indigo-700">
+            Retest Outcomes
+          </p>
+          <h3 className="mt-1 text-base font-semibold text-slate-950">
+            Compared to scan #{scan.previous_scan_id}
+          </h3>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {items.map((item) => (
+          <div
+            key={item.key}
+            className={`rounded-xl border border-white px-4 py-3 ${retestStatusBadgeClass(
+              item.key
+            )}`}
+          >
+            <p className="text-xs font-semibold uppercase tracking-wide opacity-80">
+              {item.label}
+            </p>
+            <p className="mt-1 text-2xl font-semibold">{item.value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ScanDetailSections({
   scan,
   pages,
@@ -715,6 +819,8 @@ export function ScanDetailSections({
 
   return (
     <div className="space-y-6">
+      <RetestOutcomesCard scan={scan} findings={findings} />
+
       <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <StatCard
           label="Risk Score"

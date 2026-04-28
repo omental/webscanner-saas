@@ -202,10 +202,11 @@ export function DashboardOverview({
       acc.fixed += Number(summary.fixed || 0);
       acc.stillVulnerable += Number(summary.still_vulnerable || 0);
       acc.new += Number(summary.new || 0);
+      acc.existing += Number(summary.existing || 0);
       acc.notRetested += Number(summary.not_retested || 0);
       return acc;
     },
-    { fixed: 0, stillVulnerable: 0, new: 0, notRetested: 0 }
+    { fixed: 0, stillVulnerable: 0, new: 0, existing: 0, notRetested: 0 }
   );
 
   return (
@@ -259,6 +260,7 @@ export function DashboardOverview({
             { label: "Fixed", value: retestCounts.fixed, color: "bg-emerald-600" },
             { label: "Still Vulnerable", value: retestCounts.stillVulnerable, color: "bg-red-500" },
             { label: "New", value: retestCounts.new, color: "bg-blue-500" },
+            { label: "Existing", value: retestCounts.existing, color: "bg-amber-500" },
             { label: "Not Retested", value: retestCounts.notRetested, color: "bg-slate-400" }
           ]}
         />

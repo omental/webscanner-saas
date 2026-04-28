@@ -1,5 +1,12 @@
 export type UserRole = "super_admin" | "admin" | "team_member";
 
+export type RetestStatus =
+  | "fixed"
+  | "still_vulnerable"
+  | "new"
+  | "existing"
+  | "not_retested";
+
 export type User = {
   id: number;
   name: string;
@@ -58,6 +65,23 @@ export type ScanDetail = Scan & {
   findings: Finding[];
   technologies: DetectedTechnology[];
   pages: ScanPage[];
+};
+
+export type ScanComparison = {
+  previous_scan_id: number | null;
+  current_scan_id: number;
+  fixed_findings: Finding[];
+  still_vulnerable_findings: Finding[];
+  new_findings: Finding[];
+  existing_findings: Finding[];
+  not_retested_findings: Finding[];
+  summary: {
+    fixed?: number;
+    still_vulnerable?: number;
+    new?: number;
+    existing?: number;
+    not_retested?: number;
+  };
 };
 
 export type Organization = {
@@ -206,10 +230,33 @@ export type Finding = {
   attack_response_time_ms: number | null;
   response_diff_summary: string | null;
   deduplication_key: string | null;
+  comparison_status: RetestStatus | string | null;
   evidence: string | null;
   remediation: string | null;
   is_confirmed: boolean;
   references: FindingReference[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ScanFrequency = "weekly" | "monthly" | "custom";
+export type ScanProfile =
+  | "passive"
+  | "quick"
+  | "standard"
+  | "deep"
+  | "aggressive";
+
+export type ScheduledScan = {
+  id: number;
+  organization_id: number;
+  target_id: number;
+  created_by_user_id: number;
+  scan_profile: string | null;
+  frequency: string;
+  next_run_at: string;
+  last_run_at: string | null;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 };

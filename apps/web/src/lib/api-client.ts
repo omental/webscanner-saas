@@ -6,8 +6,10 @@ import {
   Package,
   PaymentMethod,
   Scan,
+  ScanComparison,
   ScanDetail,
   ScanPage,
+  ScheduledScan,
   Target,
   TrialRegistrationResponse,
   Usage,
@@ -327,6 +329,17 @@ export const apiClient = {
       method: "POST"
     });
   },
+  retestScan(scanId: number) {
+    return request<Scan>({
+      path: `/api/v1/scans/${scanId}/retest`,
+      method: "POST"
+    });
+  },
+  getScanComparison(scanId: number) {
+    return request<ScanComparison>({
+      path: `/api/v1/scans/${scanId}/compare`
+    });
+  },
   getScanPages(scanId: number) {
     return request<ScanPage[]>({ path: `/api/v1/scans/${scanId}/pages` });
   },
@@ -336,6 +349,48 @@ export const apiClient = {
   getScanTechnologies(scanId: number) {
     return request<DetectedTechnology[]>({
       path: `/api/v1/scans/${scanId}/technologies`
+    });
+  },
+  listScheduledScans() {
+    return request<ScheduledScan[]>({ path: "/api/v1/scheduled-scans" });
+  },
+  getScheduledScan(scheduledScanId: number) {
+    return request<ScheduledScan>({
+      path: `/api/v1/scheduled-scans/${scheduledScanId}`
+    });
+  },
+  createScheduledScan(payload: {
+    target_id: number;
+    scan_profile: string;
+    frequency: string;
+    next_run_at: string;
+    is_active?: boolean;
+  }) {
+    return request<ScheduledScan>({
+      path: "/api/v1/scheduled-scans",
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+  updateScheduledScan(
+    scheduledScanId: number,
+    payload: {
+      scan_profile?: string;
+      frequency?: string;
+      next_run_at?: string;
+      is_active?: boolean;
+    }
+  ) {
+    return request<ScheduledScan>({
+      path: `/api/v1/scheduled-scans/${scheduledScanId}`,
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
+  },
+  disableScheduledScan(scheduledScanId: number) {
+    return request<ScheduledScan>({
+      path: `/api/v1/scheduled-scans/${scheduledScanId}/disable`,
+      method: "POST"
     });
   }
 };

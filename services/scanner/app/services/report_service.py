@@ -537,31 +537,45 @@ def build_scan_report_pdf(snapshot: ReportSnapshot) -> bytes:
         )
 
     story.append(Paragraph("Informational Observations", styles["section"]))
+
     if observation_findings:
         story.append(
-            _table(
-                [
-                    ["#", "Observation", "Severity", "Confidence"],
-                    *[
-                        [
-                            str(index),
-                            finding.title,
-                            finding.severity,
-                            finding.confidence_level or finding.confidence or "not set",
-                        ]
-                        for index, finding in enumerate(observation_findings, 1)
-                    ],
-                ],
-                styles,
-                [0.35 * inch, 4.0 * inch, 0.9 * inch, 1.0 * inch],
+            Paragraph(
+                "The following items are low-confidence or informational observations. "
+                "They are included for hardening, SEO, performance, and visibility improvements.",
+                styles["body"],
             )
         )
-        story.append(Spacer(1, 10))
-        for finding in observation_findings:
-            _append_finding(story, styles, finding)
-    else:
-        story.append(Paragraph("No low-confidence or informational observations were recorded.", styles["body"]))
 
+        for index, finding in enumerate(observation_findings, 1):
+            note = (
+                finding.description
+                or finding.evidence
+                or finding.remediation
+                or finding.response_diff_summary
+                or "-"
+            )
+
+            story.append(
+                _table(
+                    [
+                        ["Observation", f"{index}. {finding.title}"],
+                        ["Severity", finding.severity],
+                        ["Confidence", finding.confidence_level or finding.confidence or "not set"],
+                        ["Note", note],
+                    ],
+                    styles,
+                    [1.35 * inch, 5.0 * inch],
+                )
+            )
+            story.append(Spacer(1, 8))
+    else:
+        story.append(
+            Paragraph(
+                "No low-confidence or informational observations were recorded.",
+                styles["body"],
+            )
+        )
     story.append(Paragraph("Technologies", styles["section"]))
     if snapshot.technologies:
         story.append(
