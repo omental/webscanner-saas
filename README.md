@@ -125,6 +125,8 @@ git clone https://github.com/omental/webscanner-saas.git
 cd webscanner-saas
 
 2. Backend Setup
+```bash
+
 cd services/scanner
 python3 -m venv .venv
 source .venv/bin/activate
@@ -132,20 +134,30 @@ pip install -r requirements.txt
 3. Configure Environment
 
 Create .env file:
+```bash
 
 DATABASE_URL=postgresql+asyncpg://user:password@localhost/webscanner
 OPENROUTER_API_KEY=your_api_key
 OPENROUTER_MODEL=your_model
 
 4. Run Migrations
+```bash
+
 alembic upgrade head
 5. Start Backend
+```bash
+
 uvicorn app.main:app --reload
 6. Frontend Setup
+```bash
+
 cd ../../apps/web
 npm install
 npm run dev
-🧪 Usage
+
+---
+
+### 🧪 Usage
 Add a target
 Run a scan
 View findings
@@ -154,7 +166,11 @@ Download PDF report
 Fix vulnerabilities
 Run retest
 Monitor via dashboard
-🔄 Scanner Workflow
+
+---
+
+### 🔄 Scanner Workflow
+
 Target → Scan → Detection → Confidence Scoring
 → Evidence Collection → Report Generation
 → Fix → Retest → Comparison → Dashboard Update
@@ -168,25 +184,48 @@ Retest Comparison
 Use responsibly on authorized targets only
 Avoid scanning systems without permission
 Protect API keys and credentials
+
+---
+
+---
+
 🧠 Future Improvements
 Deeper fuzzing engine
 DOM-based XSS detection
 Advanced WAF bypass techniques
 Improved crawling depth
 Multi-tenant SaaS expansion
+
+---
+
+---
+
 📜 License
 
 This project is intended for educational and research purposes.
+
+---
+
+---
 
 👨‍💻 Author
 
 JM Mubasshir Rahman
 Software Engineer & Security Researcher
 
+---
+
+---
+
 ⭐ Acknowledgements
 OWASP
 CVE / NVD databases
 OpenRouter LLM APIs
+
+---
+```bash
+
+
 📬 Contact
 
 For collaboration, research, or deployment inquiries.
