@@ -1,144 +1,192 @@
-# Web Vulnerability Scanner Monorepo
+# 🛡️ WebScanner SaaS – AI-Powered Web Vulnerability Scanner
 
-Minimal initial monorepo scaffold for a Web Vulnerability Scanner SaaS.
+A production-ready web vulnerability scanning platform with intelligent detection, confidence scoring, AI-generated reports, retest analysis, and scheduled scans.
 
-## Structure
+---
 
-```text
-webscanner/
-  Makefile
-  apps/
-    web/
-  services/
-    scanner/
-```
+## 🚀 Features
 
-## Prerequisites
+### 🔍 Advanced Scanning Engine
+- SQL Injection (SQLi) detection
+- Cross-Site Scripting (XSS) detection
+- Server-Side Request Forgery (SSRF) detection
+- Remote Code Execution (RCE) detection
+- File Upload vulnerability detection
+- Security header analysis
+- Information disclosure checks
+- Exposure path detection
+- Technology fingerprinting
 
-- Node.js 20+
-- npm 10+
-- Python 3.12
-- PostgreSQL 18 via Homebrew on macOS
+---
 
-## Local PostgreSQL setup on Mac
+### 🛡️ WAF Detection
+- Passive WAF fingerprinting
+- Detection via headers, response behavior, and anomalies
+- Identifies protections like Cloudflare, ModSecurity, etc.
 
-Homebrew PostgreSQL on macOS commonly authenticates with your macOS username, not `postgres/postgres`.
+---
 
-Check your local username:
+### 🧠 Intelligent Analysis
+- Confidence scoring (confirmed, high, medium, low, info)
+- Evidence-based findings
+- Response diff analysis
+- Payload tracking
+- Context-aware detection (e.g., XSS context classification)
+- False positive reduction
 
+---
+
+### 🔁 Retest System
+- Re-run scans after fixes
+- Compare previous vs new results
+- Track:
+  - ✅ Fixed
+  - ⚠️ Still vulnerable
+  - 🆕 New issues
+  - 📌 Existing issues
+
+---
+
+### 📅 Scheduled Scans
+- Weekly / monthly automated scans
+- Continuous monitoring
+- Automatic scan execution
+
+---
+
+### 📊 Dashboard & Analytics
+- Risk score calculation
+- Findings breakdown
+- Severity distribution
+- Confidence distribution
+- Retest outcome tracking
+
+---
+
+### 📄 AI-Powered Reports
+- LLM-generated vulnerability reports
+- Executive summary
+- Detailed findings
+- Remediation guidance
+- References (CVE, CWE, OWASP, Exploit-DB, KEV)
+
+---
+
+### 🧾 PDF Reporting
+- Clean, structured reports
+- Table-based formatting
+- Enterprise-style output
+- Downloadable reports
+
+---
+
+## 🏗️ System Architecture
+Frontend (Next.js)
+↓
+Backend API (FastAPI)
+↓
+Scanner Engine + Services
+↓
+PostgreSQL Database
+↓
+LLM Provider (OpenRouter)
+
+---
+
+## ⚙️ Tech Stack
+
+### Backend
+- FastAPI
+- SQLAlchemy (Async)
+- Alembic
+- PostgreSQL
+
+### Frontend
+- Next.js
+- TypeScript
+- Tailwind CSS
+
+### AI / LLM
+- OpenRouter
+- GPT / LLM-based report generation
+
+### Infrastructure
+- Nginx (optional)
+- Uvicorn
+- Node.js
+
+---
+
+## 🛠️ Installation
+
+### 1. Clone Repository
 ```bash
-whoami
-```
+git clone https://github.com/omental/webscanner-saas.git
+cd webscanner-saas
 
-Use that username in the scanner service database URL:
-
-```env
-DATABASE_URL=postgresql+asyncpg://YOUR_LOCAL_USERNAME@localhost:5432/webscanner
-```
-
-## Local backend bootstrap sequence
-
-1. Start PostgreSQL:
-
-```bash
-brew services start postgresql@18
-```
-
-2. Confirm PostgreSQL is running:
-
-```bash
-brew services list
-```
-
-3. Bootstrap the local database:
-
-```bash
-cd /Users/muba/Desktop/webscanner
-make setup-db
-```
-
-4. Configure the scanner service environment:
-
-```bash
-cd /Users/muba/Desktop/webscanner/services/scanner
-cp .env.example .env
-```
-
-Then edit `.env` so `DATABASE_URL` uses your local macOS username.
-
-5. Create a virtual environment and install dependencies:
-
-```bash
-cd /Users/muba/Desktop/webscanner/services/scanner
-python3.12 -m venv .venv
+2. Backend Setup
+cd services/scanner
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
+3. Configure Environment
 
-6. Run database migrations:
+Create .env file:
 
-```bash
-cd /Users/muba/Desktop/webscanner/services/scanner
-source .venv/bin/activate
+DATABASE_URL=postgresql+asyncpg://user:password@localhost/webscanner
+OPENROUTER_API_KEY=your_api_key
+OPENROUTER_MODEL=your_model
+
+4. Run Migrations
 alembic upgrade head
-```
-
-7. Start FastAPI:
-
-```bash
-cd /Users/muba/Desktop/webscanner/services/scanner
-source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-The API will be available at [http://localhost:8000](http://localhost:8000).
-
-## Verification
-
-Check your username:
-
-```bash
-whoami
-```
-
-List databases:
-
-```bash
-psql -l
-```
-
-Connect to the local development database:
-
-```bash
-psql -d webscanner
-```
-
-Apply migrations:
-
-```bash
-cd /Users/muba/Desktop/webscanner/services/scanner
-source .venv/bin/activate
-alembic upgrade head
-```
-
-## Run the web app
-
-```bash
-cd /Users/muba/Desktop/webscanner/apps/web
+5. Start Backend
+uvicorn app.main:app --reload
+6. Frontend Setup
+cd ../../apps/web
 npm install
 npm run dev
-```
+🧪 Usage
+Add a target
+Run a scan
+View findings
+Generate AI report
+Download PDF report
+Fix vulnerabilities
+Run retest
+Monitor via dashboard
+🔄 Scanner Workflow
+Target → Scan → Detection → Confidence Scoring
+→ Evidence Collection → Report Generation
+→ Fix → Retest → Comparison → Dashboard Update
+📊 Example Outputs
+Risk Score Dashboard
+Vulnerability Findings Table
+AI Report (LLM)
+PDF Report
+Retest Comparison
+🔐 Security Considerations
+Use responsibly on authorized targets only
+Avoid scanning systems without permission
+Protect API keys and credentials
+🧠 Future Improvements
+Deeper fuzzing engine
+DOM-based XSS detection
+Advanced WAF bypass techniques
+Improved crawling depth
+Multi-tenant SaaS expansion
+📜 License
 
-The web app will be available at [http://localhost:3000](http://localhost:3000).
+This project is intended for educational and research purposes.
 
-## API health check
+👨‍💻 Author
 
-```bash
-curl http://localhost:8000/health
-```
+JM Mubasshir Rahman
+Software Engineer & Security Researcher
 
-Expected response:
+⭐ Acknowledgements
+OWASP
+CVE / NVD databases
+OpenRouter LLM APIs
+📬 Contact
 
-```json
-{"status":"ok"}
-```
+For collaboration, research, or deployment inquiries.
